@@ -1,0 +1,182 @@
+#!/usr/bin/python3 -cimport os, sys; os.execv(os.path.dirname(sys.argv[1]) + "/../common/pywrap", sys.argv)
+
+# This file is part of Cockpit.
+#
+# Copyright (C) 2015 Red Hat, Inc.
+#
+# Cockpit is free software; you can redistribute it and/or modify it
+# under the terms of the GNU Lesser General Public License as published by
+# the Free Software Foundation; either version 2.1 of the License, or
+# (at your option) any later version.
+#
+# Cockpit is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License
+# along with Cockpit; If not, see <http://www.gnu.org/licenses/>.
+
+import glob
+import os.path
+import subprocess
+import tarfile
+
+import testlib
+
+
+@testlib.skipOstree("No sosreport")
+@testlib.skipImage("No sosreport", "arch")
+@testlib.nondestructive
+@testlib.skipDistroPackage()
+class TestSOS(testlib.MachineCase):
+
+    def testBasic(self, urlroot=""):
+        b = self.browser
+        m = self.machine
+
+        m.execute("rm -rf /var/tmp/*sos*")
+
+        self.write_file("/etc/sos/sos.conf",
+                        """
+[global]
+threads=1
+
+[report]
+only-plugins=release,date,host,cgroups,networking
+""")
+
+        if urlroot != "":
+            m.write("/etc/cockpit/cockpit.conf", f"[WebService]\nUrlRoot={urlroot}")
+
+        self.login_and_go("/sosreport", urlroot=urlroot, superuser=False)
+
+        b.wait_in_text("#app", "Administrative access required")
+        if urlroot == "":
+            b.assert_pixels("#app", "limited")
+
+        b.click("#app button:contains(Turn on administrative access)")
+        b.wait_in_text(".pf-v5-c-modal-box:contains('Switch to administrative access')", "Password for admin:")
+        b.set_input_text(".pf-v5-c-modal-box:contains('Switch to administrative access') input", "foobar")
+        b.click(".pf-v5-c-modal-box button:contains('Authenticate')")
+        b.wait_not_present(".pf-v5-c-modal-box:contains('Switch to administrative access')")
+
+        b.wait_in_text("#app", "No system reports.")
+        if urlroot == "":
+            b.assert_pixels("#app", "empty")
+
+        b.click("button:contains('Run report')")
+        b.wait_visible("#sos-dialog")
+        b.set_input_text("#sos-dialog .pf-v5-c-form__group:contains(Report label) input", "mylabel")
+        b.set_input_text("#sos-dialog .pf-v5-c-form__group:contains(Encryption passphrase) input", "foobar")
+        b.set_checked("#sos-dialog .pf-v5-c-check:contains(Obfuscate) input", val=True)
+        if urlroot == "":
+            b.assert_pixels("#sos-dialog", "dialog")
+        b.click("#sos-dialog button:contains(Run report)")
+        with b.wait_timeout(120):
+            b.wait_not_present("#sos-dialog")
+
+        b.wait_visible("tr:contains(mylabel) button:contains(Download)")
+        if b.cdp.browser.name == "chromium":
+            b.cdp.invoke("Page.setDownloadBehavior", behavior="allow", downloadPath=b.cdp.download_dir)
+
+        def downloaded_sosreports():
+            return glob.glob(os.path.join(b.cdp.download_dir, "*sosreport-*.xz.gpg"))
+
+        b.click("tr:contains(mylabel) button:contains(Download)")
+        # while the download is ongoing, it will have an *.xz.tmpsuffix name, gets renamed to *.xz when done
+        testlib.wait(lambda: len(downloaded_sosreports()) > 0)
+        report_gpg = downloaded_sosreports()[0]
+        base_report_gpg = os.path.basename(report_gpg)
+        report = report_gpg.replace(".gpg", "")
+
+        m.execute(f"test -f /var/tmp/{base_report_gpg}")
+
+        # Check that /etc/release was saved. It the files does not exist, getmember raises KeyError
+        # Sometimes it takes a bit of time until the file can be opened. Try it 3 times.
+        subprocess.call(["gpg", "--batch", "--yes", "--passphrase", "foobar",
+                         "--output", report, "--decrypt", report_gpg])
+        with tarfile.open(report) as tar:
+            # the tarball contains a single subdirectory, get its name
+            names = tar.getnames()
+            topdir = names[0].split("/")[0]
+            tar.getmember(os.path.join(topdir, "etc/os-release"))
+
+        b.click("tr:contains(mylabel) button.pf-v5-c-dropdown__toggle")
+        b.click("tr:contains(mylabel) li:contains(Delete)")
+        b.click("#sos-remove-dialog button:contains(Delete)")
+        testlib.wait(lambda: m.execute(f"! test -f /var/tmp/{base_report_gpg} && echo yes"))
+
+        self.allow_journal_messages('.*comm="sosreport".*')
+
+    def testWithUrlRoot(self):
+        self.testBasic(urlroot="/webcon")
+
+    def testVerbose(self):
+        b = self.browser
+        m = self.machine
+
+        m.execute("rm -rf /var/tmp/*sos*")
+
+        self.write_file("/etc/sos/sos.conf",
+                        """
+[global]
+threads=1
+
+[report]
+only-plugins=release,date,host,cgroups,networking
+""")
+
+        self.login_and_go("/sosreport")
+
+        b.wait_in_text("#app", "No system reports.")
+
+        b.click("button:contains('Run report')")
+        b.wait_visible("#sos-dialog")
+        b.set_input_text("#sos-dialog .pf-v5-c-form__group:contains(Report label) input", "mylabel")
+        b.set_checked("#sos-dialog .pf-v5-c-check:contains(Use verbose logging) input", val=True)
+        b.click("#sos-dialog button:contains(Run report)")
+        with b.wait_timeout(120):
+            b.wait_not_present("#sos-dialog")
+
+        # There should be one archive and it should contain a bunch of debug messages
+        self.assertEqual(m.execute("ls -l /var/tmp/sosreport*mylabel*.tar.xz | wc -l").strip(), "1")
+        self.assertGreater(int(m.execute("tar --wildcards -xaOf /var/tmp/sosreport*mylabel*.tar.xz '*/sos_logs/sos.log' | grep -c 'DEBUG: \\[plugin:release\\]'")), 5)
+
+    def testCancel(self):
+        m = self.machine
+        b = self.browser
+
+        m.execute("rm -rf /var/tmp/*sos*")
+
+        self.login_and_go("/sosreport")
+        b.click("button:contains('Run report')")
+        b.click("#sos-dialog button:contains(Run report)")
+        m.execute("until pgrep -x sos >/dev/null; do sleep 1; done")
+
+        b.click("button:contains('Stop report')")
+        b.wait_not_present("#sos-dialog")
+        # cleans up properly; unfortunately closing the process is async, so need to retry a few times
+        m.execute("while pgrep -a -x sos; do sleep 1; done", timeout=10)
+        self.assertEqual(m.execute("ls /var/tmp/sosreport* 2>/dev/null || true"), "")
+
+    def testAppStream(self):
+        b = self.browser
+        m = self.machine
+
+        self.allow_journal_messages("invalid or unusable locale.*")
+        # chromium rpm has broken appstream data, which causes various parser errors
+        self.allow_journal_messages(".*xml.*")
+
+        self.login_and_go("/apps")
+        b.wait_not_present(".pf-v5-c-empty-state")
+        image_os = m.image.split('-')[0]
+        if image_os in ['fedora', 'debian', 'ubuntu']:
+            b.wait_visible(".app-list .pf-v5-c-data-list__item-row div[rowId='Diagnostic reports']")
+            b.wait_visible(".app-list .pf-v5-c-data-list__item-row div[rowId='Diagnostic reports'] button:contains('Remove')")
+        else:
+            b.wait_not_present(".app-list .pf-v5-c-data-list__item-row div[rowId='Diagnostic reports']")
+
+
+if __name__ == '__main__':
+    testlib.test_main()

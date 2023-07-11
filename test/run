@@ -1,0 +1,56 @@
+#!/bin/bash
+
+# This is the expected entry point for Cockpit CI; will be called without
+# arguments but with an appropriate $TEST_OS, and optionally $TEST_SCENARIO
+
+set -eu
+
+test/common/make-bots
+test/common/pixel-tests pull
+
+PREPARE_OPTS=""
+RUN_OPTS=""
+ALL_TESTS="$(test/common/run-tests --test-dir test/verify -l)"
+
+RE_NETWORKING='Networking|Bonding|TestBridge|Firewall|Team|IPA|AD'
+RE_STORAGE='Storage'
+RE_EXPENSIVE='HostSwitching|MultiMachine|Updates|Superuser|Kdump|Pages'
+
+# every known case needs to set RUN_OPTS to something non-empty, so that we can check if we hit any branch
+case "${TEST_SCENARIO:=}" in
+    *devel*) RUN_OPTS="$RUN_OPTS --coverage"; export NODE_ENV=development ;;&
+    *pybridge*) RUN_OPTS="$RUN_OPTS "; PREPARE_OPTS="$PREPARE_OPTS --python" ;;&
+    *firefox*) RUN_OPTS="$RUN_OPTS "; export TEST_BROWSER=firefox ;;&
+
+    *daily*)
+        bots/image-customize --fresh -v --run-command 'dnf -y copr enable rpmsoftwaremanagement/dnf-nightly && dnf -y copr enable @storage/udisks-daily && dnf -y --setopt=install_weak_deps=False update >&2' "$TEST_OS"
+        RUN_OPTS="$RUN_OPTS "
+        PREPARE_OPTS="$PREPARE_OPTS --overlay"
+        ;;&
+
+    # split tests into roughly equal scenarios for more parallelism
+    *networking*)
+        RUN_OPTS="$RUN_OPTS $(echo "$ALL_TESTS" | grep -E "$RE_NETWORKING")"
+        PREPARE_OPTS="$PREPARE_OPTS --quick"
+        ;;&
+    *storage*)
+        RUN_OPTS="$RUN_OPTS $(echo "$ALL_TESTS" | grep -E "$RE_STORAGE")"
+        PREPARE_OPTS="$PREPARE_OPTS --quick"
+        ;;&
+    *expensive*)
+        RUN_OPTS="$RUN_OPTS $(echo "$ALL_TESTS" | grep -E "$RE_EXPENSIVE")"
+        PREPARE_OPTS="$PREPARE_OPTS --quick"
+        ;;&
+    *other*)
+        RUN_OPTS="$RUN_OPTS $(echo "$ALL_TESTS" | grep -Ev "$RE_NETWORKING|$RE_STORAGE|$RE_EXPENSIVE")"
+        ;;&
+
+esac
+
+if [ -n "$TEST_SCENARIO" ] && [ -z "$RUN_OPTS" ]; then
+    echo "Unknown test scenario: $TEST_SCENARIO"
+    exit 1
+fi
+
+test/image-prepare --verbose ${PREPARE_OPTS} "$TEST_OS"
+test/common/run-tests --jobs ${TEST_JOBS:-1} --test-dir test/verify --track-naughties ${RUN_OPTS}

@@ -1,0 +1,4 @@
+extend = "../common/ruff.toml"
+ignore = [
+    "B023",     # Function definition does not bind loop variable
+]

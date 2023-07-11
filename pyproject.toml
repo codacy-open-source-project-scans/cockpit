@@ -1,0 +1,147 @@
+[build-system]
+requires = []
+backend-path = ['src']
+build-backend = 'build_backend'
+
+[tool.mypy]
+mypy_path = 'src:test/common'
+exclude = '_vendor'
+[[tool.mypy.overrides]]
+module = ["cockpit._vendor.*"]
+follow_imports = 'silent'
+
+[tool.pylint]
+max-line-length = 118
+disable = [
+  "C0114",  # Missing module docstring
+  "C0115",  # Missing class docstring
+  "R0902",  # Too many instance attributes
+  "R0903",  # Too few public methods
+  "R0913",  # Too many arguments
+  "R1705",  # Unnecessary "else" after "return"
+  "W1113",  # Keyword argument before variable positional arguments  (PEP-570 is Python 3.8)
+]
+
+[tool.ruff]
+select = [
+    "A",       # flake8-builtins
+    "B",       # flake8-bugbear
+    "C4",      # flake8-comprehensions
+    "D300",    # pydocstyle: Forbid ''' in docstrings
+    "DTZ",     # flake8-datetimez
+    "E",       # pycodestyle
+    "EXE",     # flake8-executable
+    "F",       # pyflakes
+    "FBT",     # flake8-boolean-trap
+    "G",       # flake8-logging-format
+    "I",       # isort
+    "ICN",     # flake8-import-conventions
+    "ISC",     # flake8-implicit-str-concat
+    "PLE",     # pylint errors
+    "PGH",     # pygrep-hooks
+    "PT",      # flake8-pytest-style
+    "RSE",     # flake8-raise
+    "RUF",     # ruff rules
+    "T10",     # flake8-debugger
+    "TCH",     # flake8-type-checking
+    "W",       # warnings (mostly whitespace)
+    "YTT",     # flake8-2020
+]
+exclude = [
+    ".git/",
+    "modules/",
+    "node_modules/",
+]
+ignore = [
+    "A003",  # Class attribute is shadowing a python builtin
+    "B011",  # Do not `assert False` (`python -O` removes these calls), raise `AssertionError()`
+    "E731",  # Do not assign a `lambda` expression, use a `def`
+    "PT011", # `pytest.raises(OSError)` is too broad
+    "RUF012", # Mutable class attributes should be annotated with `typing.ClassVar`
+]
+line-length = 118
+src = []
+
+[tool.ruff.flake8-pytest-style]
+fixture-parentheses = false
+mark-parentheses = false
+
+[tool.ruff.isort]
+known-first-party = ["cockpit"]
+
+[tool.pytest.ini_options]
+addopts = ['--strict-markers']  # cf. https://github.com/cockpit-project/cockpit/pull/18584#issuecomment-1490243994
+pythonpath = ["src"]
+testpaths = ["test/pytest"]
+log_cli = true
+required_plugins = ["pytest-asyncio"]
+
+[tool.vulture]
+paths = [
+   "src",
+   "test/pytest",
+   "tools/vulture-suppressions",
+]
+ignore_names = [
+   "do_*",
+   "test[A-Z0-9]*",
+]
+ignore_decorators = [
+   "@*.getter",
+   "@*.register_function",
+   "@bus.Interface.Method",
+   "@pytest.hookimpl",
+]
+
+[tool.coverage.paths]
+source = ["src", "*/site-packages"]
+
+[tool.coverage.run]
+concurrency = ["multiprocessing"]
+source_pkgs = ["cockpit"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+  "pragma: no cover",  # default
+  "raise NotImplementedError",
+]
+
+[tool.tox]
+legacy_tox_ini = """
+[tox]
+envlist = lint,pytest
+isolated_build = True
+labels =
+  venv = py311-lint, py3{6,7,8,9,10,11,12}-pytest
+
+# The default test environments use system packages and never PyPI.
+[testenv:{lint,pytest}]
+sitepackages = True
+install_command = python3 -m pip install --no-index --no-build-isolation {opts} {packages}
+wheel_build_env = pkg
+
+# All other environments (names like py311-lint, py36-pytest, etc) are isolated
+# from the system and get their packages from PyPI, according to the specific
+# test environment being requested.  We build the wheel in a common environment.
+[testenv]
+package = wheel
+wheel_build_env = venv-pkg
+skip_install = lint: True
+deps =
+  lint: mypy
+  lint: flake8
+  lint: ruff
+  lint: vulture
+  pytest
+  pytest-asyncio
+  pytest: pytest-cov
+  pytest: pytest-timeout
+  pytest: pytest-xdist
+allowlist_externals = test/static-code
+commands =
+  pytest: python3 -m pytest -opythonpath= {posargs}
+  lint: test/static-code --tap
+"""

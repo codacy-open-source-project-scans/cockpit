@@ -1,0 +1,552 @@
+#!/usr/bin/python3 -cimport os, sys; os.execv(os.path.dirname(sys.argv[1]) + "/../common/pywrap", sys.argv)
+
+# This file is part of Cockpit.
+#
+# Copyright (C) 2021 Red Hat, Inc.
+#
+# Cockpit is free software; you can redistribute it and/or modify it
+# under the terms of the GNU Lesser General Public License as published by
+# the Free Software Foundation; either version 2.1 of the License, or
+# (at your option) any later version.
+#
+# Cockpit is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License
+# along with Cockpit; If not, see <http://www.gnu.org/licenses/>.
+
+import packagelib
+import storagelib
+import testlib
+
+
+@testlib.skipImage("No Stratis", "debian-*", "ubuntu-*")
+class TestStorageStratis(storagelib.StorageCase):
+    def setUp(self):
+        super().setUp()
+
+        if self.image == "arch":
+            # Arch Linux does not enable systemd units by default
+            self.machine.execute("systemctl enable --now stratisd")
+            self.addCleanup(self.machine.execute, "systemctl disable --now stratisd")
+
+    def testBasic(self):
+        m = self.machine
+        b = self.browser
+
+        self.login_and_go("/storage")
+
+        SIZE_4GB = 4 * 1000000000
+
+        dev_1 = "/dev/sda"
+        m.add_disk(SIZE_4GB, serial="DISK1")
+        b.wait_in_text("#drives", dev_1)
+
+        dev_2 = "/dev/sdb"
+        m.add_disk(SIZE_4GB, serial="DISK2")
+        b.wait_in_text("#drives", dev_2)
+
+        dev_3 = "/dev/sdc"
+        m.add_disk(SIZE_4GB, serial="DISK3")
+        b.wait_in_text("#drives", dev_3)
+
+        dev_4 = "/dev/sdd"
+        m.add_disk(SIZE_4GB, serial="DISK4")
+        b.wait_in_text("#drives", dev_4)
+
+        dev_5 = "/dev/sde"
+        m.add_disk(SIZE_4GB, serial="DISK5")
+        b.wait_in_text("#drives", dev_5)
+
+        # Create a pool
+        self.dialog_open_with_retry(trigger=lambda: self.devices_dropdown("Create Stratis pool"),
+                                    expect=lambda: (self.dialog_is_present('disks', dev_1) and
+                                                    self.dialog_is_present('disks', dev_2) and
+                                                    self.dialog_check({"name": "pool0"})))
+        self.dialog_set_val("disks", {dev_1: True, dev_2: True})
+        b.assert_pixels("#dialog", "create-pool")
+        self.dialog_apply()
+        self.dialog_wait_close()
+
+        b.wait_in_text("#devices", "pool0")
+        b.wait_in_text("#devices", "8 GB Stratis pool")
+        b.assert_pixels("#devices", "pool-row")
+
+        # Check that the next name is "pool1"
+        self.devices_dropdown("Create Stratis pool")
+        self.dialog_wait_open()
+        self.dialog_wait_val("name", "pool1")
+        self.dialog_cancel()
+        self.dialog_wait_close()
+
+        if not m.image.startswith("rhel-8-9") and m.image != "centos-8-stream":
+            # Stop the pool (only works with Stratis 3)
+            pool_uuid = m.execute("stratis --unhyphenated-uuids pool list --name pool0 | grep ^UUID | cut -d' ' -f2").strip()
+            m.execute("stratis pool stop pool0")
+            b.wait_in_text(f'.sidepanel-row:contains("{pool_uuid}")', "Stopped Stratis pool")
+
+            # Start it
+            b.click(f'.sidepanel-row:contains("{pool_uuid}") button')
+            b.wait_in_text("#devices", "pool0")
+            b.wait_in_text("#devices", "8 GB Stratis pool")
+
+        b.click('.sidepanel-row:contains("pool0")')
+        b.wait_visible('#storage-detail')
+
+        udisk_contains_stratis_private = "physical-originsub" in m.execute("udisksctl dump")
+
+        # Create two filesystems
+        b.click("button:contains(Create new filesystem)")
+        self.dialog_wait_open()
+        self.dialog_set_val('name', 'fsys1')
+        self.dialog_set_val('mount_point', '/run/fsys1')
+        b.assert_pixels("#dialog", "create-fsys")
+        self.dialog_apply()
+        self.dialog_wait_close()
+
+        b.wait_in_text("#detail-content", "fsys1")
+        b.assert_pixels("#detail-content", "fsys-row")
+
+        self.assertEqual(self.inode(m.execute("findmnt -n -o SOURCE /run/fsys1").strip()),
+                         self.inode("/dev/stratis/pool0/fsys1"))
+
+        b.click("button:contains(Create new filesystem)")
+        self.dialog({'name': 'fsys2',
+                     'mount_point': '/run/fsys2'})
+        b.wait_in_text("#detail-content", "fsys2")
+        b.assert_pixels("#detail-content", "fsys-rows")
+        self.assertEqual(self.inode(m.execute("findmnt -n -o SOURCE /run/fsys2").strip()),
+                         self.inode("/dev/stratis/pool0/fsys2"))
+        m.write("/run/fsys2/FILE", "Hello Stratis!")
+
+        # Check that they have entries in fstab
+        self.assertNotEqual(m.execute("grep /run/fsys1 /etc/fstab"), "")
+        self.assertNotEqual(m.execute("grep /run/fsys2 /etc/fstab"), "")
+
+        # Rename one filesystem
+        self.content_dropdown_action(1, "Rename")
+        self.dialog({'name': "fsys1-renamed"})
+        b.wait_in_text("#detail-content", "fsys1-renamed")
+
+        # Destroy one filesystem
+        self.wait_mounted(1, 1)
+        self.content_dropdown_action(1, "Delete")
+        self.dialog_wait_open()
+        b.assert_pixels("#dialog", "delete-fsys")
+        self.dialog_apply()
+        self.dialog_wait_close()
+        b.wait_not_in_text("#detail-content", "fsys1-renamed")
+
+        # Unmount and remount the other filesystem
+        self.content_dropdown_action(1, "Unmount")
+        self.confirm()
+        self.content_tab_wait_in_info(1, 1, "Mount point", "The filesystem is not mounted")
+        self.content_row_action(1, "Mount")
+        self.dialog({})
+        self.wait_mounted(1, 1)
+
+        # Make a copy of the filesystem
+        self.content_dropdown_action(1, "Snapshot")
+        self.dialog_wait_open()
+        self.dialog_set_val('name', 'fsys2-copy')
+        self.dialog_set_val('mount_point', '/run/fsys2-copy')
+        self.dialog_set_val('at_boot', 'never')
+        b.assert_pixels("#dialog", "copy-fsys")
+        self.dialog_apply()
+        self.dialog_wait_close()
+        b.wait_in_text("#detail-content", "fsys2-copy")
+
+        self.assertEqual("Hello Stratis!", m.execute("cat /run/fsys2-copy/FILE"))
+
+        # Delete the copy
+        self.wait_mounted(2, 1)
+        self.content_dropdown_action(2, "Delete")
+        self.confirm()
+        b.wait_not_in_text("#detail-content", "fsys2-copy")
+
+        # Make an unmounted copy of the filesystem
+        self.content_dropdown_action(1, "Snapshot")
+        self.dialog_wait_open()
+        self.dialog_set_val('name', 'fsys2-copy')
+        self.dialog_set_val('at_boot', 'never')
+        self.dialog_apply_secondary()
+        self.dialog_wait_close()
+        b.wait_in_text("#detail-content", "fsys2-copy")
+
+        # Delete the copy
+        self.content_dropdown_action(2, "Delete")
+        self.confirm()
+        b.wait_not_in_text("#detail-content", "fsys2-copy")
+
+        # Create an unmounted filesystem
+        b.click("button:contains(Create new filesystem)")
+        self.dialog_wait_open()
+        self.dialog_set_val('name', 'fsys-unmounted')
+        self.dialog_apply_secondary()
+        self.dialog_wait_close()
+
+        b.wait_in_text("#detail-content", "fsys-unmounted")
+
+        # Delete the unmounted filesystem
+        self.content_dropdown_action(2, "Delete")
+        self.confirm()
+        b.wait_not_in_text("#detail-content", "fsys2-copy")
+
+        # Add a data blockdev
+        b.click('#detail-sidebar .pf-v5-c-card__actions button')
+        self.dialog_wait_open()
+        self.dialog_apply()
+        self.dialog_wait_error("disks", "At least one")
+        self.dialog_set_val('disks', {dev_3: True})
+        # FIXME: Remove ignore when fixed: https://bugzilla.redhat.com/show_bug.cgi?id=2183084
+        # b.assert_pixels("#dialog", "add-disk", ignore=[".pf-v5-c-data-list__item-content:contains(stratis)"])
+        self.dialog_apply()
+        self.dialog_wait_close()
+
+        b.wait_in_text('#detail-sidebar', dev_3)
+        b.wait_in_text(f'#detail-sidebar .sidepanel-row:contains({dev_3})', "data")
+
+        # Add a cache blockdev
+        b.click('#detail-sidebar .pf-v5-c-card__actions button')
+        self.dialog({'tier': "cache",
+                     'disks': {dev_4: True}})
+        b.wait_in_text('#detail-sidebar', dev_4)
+        b.wait_in_text(f'#detail-sidebar .sidepanel-row:contains({dev_4})', "cache")
+
+        # Add a second cache blockdev, this uses a different code path
+        b.click('#detail-sidebar .pf-v5-c-card__actions button')
+        self.dialog({'tier': "cache",
+                     'disks': {dev_5: True}})
+        b.wait_in_text('#detail-sidebar', dev_5)
+        b.wait_in_text(f'#detail-sidebar .sidepanel-row:contains({dev_5})', "cache")
+
+        # Rename the pool
+        b.click('#detail-header button:contains(Rename)')
+        self.dialog({'name': "pool0-renamed"})
+        b.wait_in_text('#detail-header', "pool0-renamed")
+
+        # Create another filesystem
+        b.click("button:contains(Create new filesystem)")
+        self.dialog({'name': 'fsys3',
+                     'mount_point': '/run/fsys3'})
+        b.wait_in_text("#detail-content", "fsys3")
+        self.assertEqual(self.inode(m.execute("findmnt -n -o SOURCE /run/fsys3").strip()),
+                         self.inode("/dev/stratis/pool0-renamed/fsys3"))
+
+        # Destroy the pool
+        self.wait_mounted(1, 1)
+        self.wait_mounted(2, 1)
+        b.click('#detail-header button:contains(Delete)')
+        self.dialog_wait_open()
+        b.assert_pixels('#dialog', "delete-pool")
+        self.dialog_apply()
+        self.dialog_wait_close()
+        b.wait_visible("#storage")
+        b.wait_not_in_text("#devices", "pool0-renamed")
+
+        # Check that the entries have disappeared from fstab
+        self.assertEqual(m.execute("grep /run/fsys1 /etc/fstab || true"), "")
+        self.assertEqual(m.execute("grep /run/fsys2 /etc/fstab || true"), "")
+        self.assertEqual(m.execute("grep /run/fsys3 /etc/fstab || true"), "")
+
+        m.execute("! findmnt /run/fsys1")
+        m.execute("! findmnt /run/fsys2")
+        m.execute("! findmnt /run/fsys2-copy")
+        m.execute("! findmnt /run/fsys3")
+
+        # https://bugzilla.redhat.com/show_bug.cgi?id=2183084
+        # Do this assersion in the end so that the previous checks still run.
+        # After the stratis pool is deleted we can't check this, so use the value from earlier.
+        self.assertFalse(udisk_contains_stratis_private)
+
+    def testEncrypted(self):
+        m = self.machine
+        b = self.browser
+
+        self.login_and_go("/storage")
+
+        dev_1 = "/dev/sda"
+        m.add_disk("4G", serial="DISK1")
+        b.wait_in_text("#drives", dev_1)
+
+        dev_2 = "/dev/sdb"
+        m.add_disk("4G", serial="DISK2")
+        b.wait_in_text("#drives", dev_2)
+
+        # Create an encrypted pool with a filesystem, but don't mount
+        # it.  Cockpit will chose a key description for the pool and
+        # we occupy its first choice in order to force Cockpit to use
+        # something else.
+        m.execute("echo not-the-passphrase | stratis key set --capture-key pool0")
+        self.dialog_open_with_retry(trigger=lambda: self.devices_dropdown("Create Stratis pool"),
+                                    expect=lambda: (self.dialog_is_present('disks', dev_1) and
+                                                    self.dialog_check({"name": "pool0"})))
+        self.dialog_set_val("encrypt.on", val=True)
+        self.dialog_set_val("passphrase", "foodeeboodeebar")
+        self.dialog_set_val("passphrase2", "foodeeboodeebar")
+        self.dialog_set_val("disks", {dev_1: True})
+        b.assert_pixels("#dialog", "create-encrypted-pool")
+        self.dialog_apply()
+        self.dialog_wait_close()
+        m.execute("stratis key unset pool0")
+
+        b.wait_in_text("#devices", "pool0")
+        b.click('.sidepanel-row:contains("pool0")')
+        b.wait_visible('#storage-detail')
+        b.wait_in_text('#detail-header', "Encrypted Stratis pool pool0")
+        b.click("button:contains(Create new filesystem)")
+        self.dialog({'name': 'fsys1',
+                     'mount_point': '/run/fsys1',
+                     'at_boot': 'local'},
+                    secondary=True)
+        b.wait_in_text("#detail-content", "fsys1")
+
+        # Check that it has an entry in fstab and that it is "noauto"
+        self.assertIn("noauto", m.execute("grep /run/fsys1 /etc/fstab"))
+
+        # Add a data blockdev
+        b.click('#detail-sidebar .pf-v5-c-card__actions button')
+        self.dialog_wait_open()
+        self.dialog_set_val('disks', {dev_2: True})
+        self.dialog_apply()
+        self.dialog_wait_error("passphrase", "Passphrase cannot be empty")
+        self.dialog_set_val('passphrase', "foodeeboodeebar")
+        self.dialog_apply()
+        self.dialog_wait_close()
+        b.wait_in_text('#detail-sidebar', dev_2)
+        b.wait_in_text(f'#detail-sidebar .sidepanel-row:contains({dev_2})', "data")
+
+        m.reboot()
+        m.start_cockpit()
+        b.relogin()
+        b.enter_page("/storage")
+        b.wait_visible("#storage-detail")
+
+        b.wait_in_text('#detail-header', "Stopped Stratis pool")
+        b.wait_in_text('#detail-sidebar', dev_1)
+        b.wait_in_text('#detail-sidebar', dev_2)
+
+        # Unlock the pool
+        b.click('#detail-header button:contains(Start)')
+        self.dialog_wait_open()
+        self.dialog_set_val('passphrase', "wrong-passphrase")
+        self.dialog_apply()
+        b.wait_visible("#dialog .pf-v5-c-alert.pf-m-danger")
+        self.dialog_set_val('passphrase', "foodeeboodeebar")
+        self.dialog_apply()
+        self.dialog_wait_close()
+        b.wait_not_in_text('#detail-header', "Stopped")
+        b.wait_in_text('#detail-header', "Encrypted Stratis pool pool0")
+
+        # Mount the filesystem
+        self.content_row_action(1, "Mount")
+        self.dialog({})
+        self.wait_mounted(1, 1)
+
+        # Reboot (this requires the passphrase)
+        self.setup_systemd_password_agent("foodeeboodeebar")
+        m.reboot()
+        m.start_cockpit()
+        b.relogin()
+        b.enter_page("/storage")
+        b.wait_visible("#storage-detail")
+
+        # Filesystem should be mounted now
+        self.wait_mounted(1, 1)
+
+        # Destroy the pool
+        b.click('#detail-header button:contains(Delete)')
+        self.confirm()
+        b.wait_visible("#storage")
+        b.wait_not_in_text("#devices", "pool0")
+
+        # Check that the entry has disappeared from fstab
+        self.assertEqual(m.execute("grep /run/fsys1 /etc/fstab || true"), "")
+
+    def testCli(self):
+        m = self.machine
+        b = self.browser
+
+        self.login_and_go("/storage")
+
+        dev_1 = "/dev/sda"
+        m.add_disk("4G", serial="DISK1")
+        b.wait_in_text("#drives", dev_1)
+
+        dev_2 = "/dev/sdb"
+        m.add_disk("4G", serial="DISK2")
+        b.wait_in_text("#drives", dev_2)
+
+        # Create a pool outside of Cockpit
+        m.execute(f"stratis pool create TEST1 {dev_1} {dev_2}")
+        b.wait_in_text("#devices", "TEST1")
+        b.wait_in_text("#devices", "/dev/stratis/TEST1/")
+        b.click('.sidepanel-row:contains("TEST1")')
+        b.wait_visible("#storage-detail")
+        b.wait_in_text("#detail-sidebar", dev_1)
+        b.wait_in_text("#detail-sidebar", dev_2)
+
+        # Create two filesystems outside of Cockpit
+        m.execute("stratis filesystem create TEST1 fsys1")
+        b.wait_in_text("#detail-content", "fsys1")
+        m.execute("stratis filesystem create TEST1 fsys2")
+        b.wait_in_text("#detail-content", "fsys2")
+
+        # Mount externally, adjust fstab with Cockpit
+        m.execute("mkdir /run/fsys1; mount /dev/stratis/TEST1/fsys1 /run/fsys1")
+        fsys_tab = self.content_tab_expand(1, 1)
+        b.click(fsys_tab + " button:contains(Mount automatically on /run/fsys1 on boot)")
+        b.wait_not_present(fsys_tab + " button:contains(Mount automatically on /run/fsys1 on boot)")
+        self.assertIn("stratis-fstab-setup", m.execute("grep /run/fsys1 /etc/fstab"))
+
+        # Unmount externally, adjust fstab with Cockpit
+        m.execute("umount /run/fsys1")
+        b.click(fsys_tab + " button:contains(Do not mount automatically on boot)")
+        b.wait_not_present(fsys_tab + " button:contains(Do not mount automatically on boot)")
+        self.assertIn("noauto", m.execute("grep /run/fsys1 /etc/fstab"))
+
+        # Destroy them outside of Cockpit
+        m.execute("stratis filesystem destroy TEST1 fsys1")
+        b.wait_not_in_text("#detail-content", "fsys1")
+        m.execute("stratis filesystem destroy TEST1 fsys2")
+        b.wait_not_in_text("#detail-content", "fsys2")
+
+        # Destroy the pool outside of Cockpit
+        m.execute("stratis pool destroy TEST1")
+        b.wait_in_text("#storage-detail", "Not found")
+
+        b.go("#/")
+        b.wait_visible('#storage')
+        b.wait_not_in_text("#devices", "TEST1")
+
+    def testReboot(self):
+        m = self.machine
+        b = self.browser
+
+        self.login_and_go("/storage")
+
+        dev_1 = "/dev/sda"
+        m.add_disk("4G", serial="DISK1")
+        b.wait_in_text("#drives", dev_1)
+
+        # Create a pool
+        self.dialog_with_retry(trigger=lambda: self.devices_dropdown("Create Stratis pool"),
+                               expect=lambda: (self.dialog_is_present('disks', dev_1) and
+                                               self.dialog_check({"name": "pool0"})),
+                               values={"disks": {dev_1: True}})
+        b.wait_in_text("#devices", "pool0")
+
+        b.click('.sidepanel-row:contains("pool0")')
+        b.wait_visible('#storage-detail')
+
+        # Create a filesystems
+        b.click("button:contains(Create new filesystem)")
+        self.dialog({'name': 'fsys1',
+                     'mount_point': '/run/fsys1'})
+        b.wait_in_text("#detail-content", "fsys1")
+
+        m.reboot()
+        m.start_cockpit()
+        b.relogin()
+        b.enter_page("/storage")
+        b.wait_visible("#storage-detail")
+
+        # Filesystem should be mounted now
+        self.wait_mounted(1, 1)
+
+    def testAtBoot(self):
+        m = self.machine
+        b = self.browser
+
+        self.login_and_go("/storage")
+
+        dev_1 = "/dev/sda"
+        m.add_disk("4G", serial="DISK1")
+        b.wait_in_text("#drives", dev_1)
+
+        # Create a pool
+        self.dialog_with_retry(trigger=lambda: self.devices_dropdown("Create Stratis pool"),
+                               expect=lambda: (self.dialog_is_present('disks', dev_1) and
+                                               self.dialog_check({"name": "pool0"})),
+                               values={"disks": {dev_1: True}})
+        b.wait_in_text("#devices", "pool0")
+
+        b.click('.sidepanel-row:contains("pool0")')
+        b.wait_visible('#storage-detail')
+
+        def create(at_boot):
+            b.click("button:contains(Create new filesystem)")
+            self.dialog({'name': 'fsys1',
+                         'mount_point': '/foo',
+                         'at_boot': at_boot})
+            b.wait_in_text("#detail-content", "fsys1")
+            self.wait_mounted(1, 1)
+
+        def destroy():
+            self.content_dropdown_action(1, "Delete")
+            self.dialog_wait_open()
+            self.dialog_apply_with_retry("Device or resource busy")
+            b.wait_not_in_text("#detail-content", "fsys1")
+
+        create("local")
+        self.assertNotIn("noauto", m.execute("findmnt --fstab -n -o OPTIONS /foo"))
+        destroy()
+
+        create("nofail")
+        self.assertIn("nofail", m.execute("findmnt --fstab -n -o OPTIONS /foo"))
+        destroy()
+
+        create("netdev")
+        self.assertIn("_netdev", m.execute("findmnt --fstab -n -o OPTIONS /foo"))
+        destroy()
+
+        create("never")
+        self.assertIn("x-cockpit-never-auto", m.execute("findmnt --fstab -n -o OPTIONS /foo"))
+        self.assertIn("noauto", m.execute("findmnt --fstab -n -o OPTIONS /foo"))
+        destroy()
+
+
+@testlib.skipImage("No Stratis", "debian-*", "ubuntu-*", "arch")
+class TestStoragePackagesStratis(packagelib.PackageCase, storagelib.StorageCase):
+
+    def testStratisOndemandInstallation(self):
+        m = self.machine
+        b = self.browser
+
+        # RHEL 8 should not offer installation of Stratis from Cockpit
+        # itself.
+        #
+        ondemand_stratis = "rhel-8" not in m.image
+
+        m.execute("systemctl stop stratisd && dnf remove -y stratisd stratis")
+        if ondemand_stratis:
+            self.addPackageSet("stratis")
+            self.enableRepo()
+
+        self.login_and_go("/storage")
+
+        dev_1 = "/dev/sda"
+        m.add_disk("4G", serial="DISK1")
+        b.wait_in_text("#drives", dev_1)
+
+        if ondemand_stratis:
+            self.devices_dropdown("Create Stratis pool")
+            self.dialog_wait_open()
+            b.wait_in_text("#dialog", "The stratisd package must be installed")
+            self.dialog_apply()
+            with b.wait_timeout(60):
+                self.dialog_wait_val("name", "pool0")
+            self.dialog_set_val("disks", {dev_1: True})
+            self.dialog_apply()
+            self.dialog_wait_close()
+            b.wait_in_text("#devices", "pool0")
+        else:
+            b.click("#devices .pf-v5-c-dropdown button.pf-v5-c-dropdown__toggle")
+            b.wait_visible("#devices .pf-v5-c-dropdown a:contains('Create RAID device')")
+            b.wait_not_present("#devices .pf-v5-c-dropdown a:contains('Create Stratis pool')")
+
+
+if __name__ == '__main__':
+    testlib.test_main()
