@@ -111,9 +111,19 @@ class Bridge(Router, PackagesListener):
                 logger.warning("Neither /etc/os-release nor /usr/lib/os-release exists")
                 return {}
 
-        with file:
-            lexer = shlex.shlex(file, posix=True, punctuation_chars=True)
-            return dict(token.split('=', 1) for token in lexer)
+        os_release = {}
+        for line in file.readlines():
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            try:
+                k, v = line.split('=')
+                (v_parsed, ) = shlex.split(v)  # expect exactly one token
+            except ValueError:
+                logger.warning('Ignoring invalid line in os-release: %r', line)
+                continue
+            os_release[k] = v_parsed
+        return os_release
 
     def do_init(self, message: Dict[str, object]) -> None:
         superuser = message.get('superuser')
@@ -121,17 +131,15 @@ class Bridge(Router, PackagesListener):
             self.superuser_rule.init(superuser)
 
     def do_send_init(self) -> None:
-        if self.packages is not None:
-            packages_info = {
-                'checksum': self.packages.checksum,
-                'packages': {p: None for p in self.packages.packages}
-            }
-        else:
-            packages_info = {}
+        init_args = {
+            'capabilities': {'explicit-superuser': True},
+            'os-release': self.get_os_release(),
+        }
 
-        self.write_control(command='init', version=1, **packages_info,
-                           os_release=self.get_os_release(),
-                           capabilities={'explicit-superuser': True})
+        if self.packages is not None:
+            init_args['packages'] = {p: None for p in self.packages.packages}
+
+        self.write_control(command='init', version=1, **init_args)
 
     # PackagesListener interface
     def packages_loaded(self):

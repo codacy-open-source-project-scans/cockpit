@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+import unittest.mock
 from pathlib import Path
 from typing import Dict, Iterable
 
@@ -550,3 +551,30 @@ async def test_channel(channeltype, tmp_path):
             elif command == 'close':
                 assert 'problem' not in control
                 return
+
+
+@pytest.mark.parametrize(('os_release', 'expected'), [
+    # simple values, with comments and ignored space
+    (
+        '\n\n# simple\nID=mylinux\nVERSION=1.2\n\n# comment\nFOO=bar\n\n',
+        {'ID': 'mylinux', 'VERSION': '1.2', 'FOO': 'bar'}
+    ),
+    # quoted values
+    (
+        '''SINGLE='foo:bar '\nDOUBLE=" bar//foo"\n''',
+        {'SINGLE': 'foo:bar ', 'DOUBLE': ' bar//foo'}
+    ),
+    # ignore ungrammatical lines
+    (
+        'A=a\nNOVALUE\nDOUBLEEQ=a=b\nB=b',
+        {'A': 'a', 'B': 'b'}
+    ),
+    # invalid values; anything outside [A-Za-z0-9] must be quoted; but our parser is more liberal
+    (
+        'X=a:b\nY=a b\nZ=a-b\nV=a_b',
+        {'X': 'a:b', 'Z': 'a-b', 'V': 'a_b'}
+    ),
+])
+def test_get_os_release(os_release, expected):
+    with unittest.mock.patch('builtins.open', unittest.mock.mock_open(read_data=os_release)):
+        assert Bridge.get_os_release() == expected

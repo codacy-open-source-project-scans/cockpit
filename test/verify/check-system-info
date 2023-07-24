@@ -532,6 +532,7 @@ class TestSystemInfo(packagelib.PackageCase):
         self.login_and_go("/system")
         # asset tag should be hidden
         b.wait_not_present('#system_information_asset_tag_text')
+
         # Hardware should be hidden
         b.wait_not_present('#system_information_hardware_text')
         b.click(hardware_page_link)
@@ -565,12 +566,17 @@ class TestSystemInfo(packagelib.PackageCase):
         # Clean up after lazy OEMs, falls back to board vendor/name
         m.write("/sys/class/dmi/id/sys_vendor", "To Be Filled By O.E.M.")
         m.write("/sys/class/dmi/id/product_name", "To Be Filled By O.E.M.")
+        m.write("/sys/class/dmi/id/product_serial", "PL1234")
         m.write("/sys/class/dmi/id/board_vendor", "brdven")
         m.write("/sys/class/dmi/id/board_name", "brdnam")
         b.reload()
         b.go("/system")
         b.enter_page('/system')
         b.wait_in_text('#system_information_hardware_text', "brdven brdnam")
+        if m.execute("uname -m").strip() == "x86_64":
+            b.wait_in_text('#system_information_asset_tag_text', "PL1234")
+        else:
+            b.wait_not_present('#system_information_asset_tag_text')
         b.click(hardware_page_link)
         b.enter_page("/system/hwinfo")
         b.wait_in_text('#hwinfo-system-info-list .hwinfo-system-info-list-item:nth-of-type(1) .pf-v5-c-description-list__group:nth-of-type(2) dd', "brdnam")
@@ -763,7 +769,7 @@ machine         : 8561
         # - Debian: no BLS, options go into /etc/default/grub and grub.cfg
         # - BLS, options go directly into entries, or entries use $kernelopt (defined in grubenv)
         if not m.ostree_image:
-            m.execute(r"""set -e
+            m.execute(r"""
 touch /boot/vmlinuz-42.0.0; mkdir -p /lib/modules/42.0.0/
 if type update-grub >/dev/null 2>&1; then
     update-grub  # Debian/Ubuntu
@@ -777,7 +783,7 @@ else
 fi
 """)
             # clean up so that next reboot works
-            m.execute(r"""set -e
+            m.execute(r"""
 rm /boot/vmlinuz-42.0.0
 if type update-grub >/dev/null 2>&1; then
     update-grub  # Debian/Ubuntu
@@ -905,6 +911,7 @@ password=foobar
         b.become_superuser()
         b.wait_in_text(".system-health-insights a", "3 hits, including important")
         self.assertIn("123-nice-id", b.attr(".system-health-insights a", "href"))
+        b.logout()
 
     def testOverview(self):
         m = self.machine

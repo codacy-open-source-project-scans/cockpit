@@ -177,7 +177,8 @@ function sosCreate(args, setProgress, setError, setErrorDetail) {
     });
 
     task.catch(error => {
-        setError(error.toString());
+        console.error(JSON.stringify(error)); // easier investigation of failures, errors in pty mode may be hard to see
+        setError(error.toString() || _("sos report failed"));
         setErrorDetail(output);
     });
 
@@ -395,7 +396,7 @@ const Menu = ({ items }) => {
 
 const MenuItem = ({ onClick, onlyNarrow, children }) => (
     <DropdownItem className={onlyNarrow ? "show-only-when-narrow" : null}
-                  onKeyPress={onClick}
+                  onKeyDown={onClick}
                   onClick={onClick}>
         {children}
     </DropdownItem>
