@@ -119,7 +119,7 @@ export const MacMenu = ({ idPrefix, model, mac, setMAC }) => {
 
 export const MemberInterfaceChoices = ({ idPrefix, memberChoices, setMemberChoices, model, group }) => {
     return (
-        <Stack hasGutter id={idPrefix + "-interface-members-list"}>
+        <Stack id={idPrefix + "-interface-members-list"}>
             {Object.keys(memberChoices).map((iface, idx) => (
                 <Checkbox data-iface={iface}
                           id={idPrefix + "-interface-members-" + iface}
@@ -243,11 +243,12 @@ export const NetworkAction = ({ buttonText, iface, connectionSettings, type }) =
 function reactivateConnection({ con, dev }) {
     if (con.Settings.connection.interface_name &&
         con.Settings.connection.interface_name != dev.Interface) {
-        return dev.disconnect().then(function () { return con.activate(null, null) })
-                .fail(show_unexpected_error);
+        return dev.disconnect()
+                .then(() => con.activate(null, null))
+                .catch(show_unexpected_error);
     } else {
         return con.activate(dev, null)
-                .fail(show_unexpected_error);
+                .catch(show_unexpected_error);
     }
 }
 

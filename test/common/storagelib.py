@@ -140,7 +140,7 @@ class StorageHelpers:
 
     def content_tab_expand(self, row_index, tab_index):
         tab_btn = self.content_row_tbody(row_index) + " .pf-v5-c-tabs ul li:nth-child(%d) button" % tab_index
-        tab = self.content_row_tbody(row_index) + " .ct-listing-panel-body[data-key=%d]" % (tab_index - 1)
+        tab = self.content_row_tbody(row_index) + " .ct-listing-panel-body[data-key='%d']" % (tab_index - 1)
         self.content_row_expand(row_index)
         self.browser.click(tab_btn)
         self.browser.wait_visible(tab)
@@ -180,7 +180,7 @@ class StorageHelpers:
             row = self.content_row_tbody(row_index)
             row_item = row + " tr td.pf-v5-c-table__toggle button"
             tab_btn = row + " .pf-v5-c-tabs ul li:nth-child(%d) button" % tab_index
-            tab = row + " .ct-listing-panel-body[data-key=%d]" % (tab_index - 1)
+            tab = row + " .ct-listing-panel-body[data-key='%d']" % (tab_index - 1)
             cell = tab + f" dt:contains({title}) + *"
 
             # The DOM might change at any time while we are inspecting
@@ -265,8 +265,8 @@ class StorageHelpers:
             for label in val:
                 self.browser.set_checked(f'{sel} :contains("{label}") input', val)
         elif ftype == "size-slider":
-            self.browser.set_val(sel + " .size-unit", "1000000")
-            self.browser.set_input_text(sel + " .size-text", str(val))
+            self.browser.set_val(sel + " .size-unit select", "1000000")
+            self.browser.set_input_text(sel + " .size-text input", str(val))
         elif ftype == "select":
             self.browser.set_val(sel + " select", val)
         elif ftype == "select-radio":
@@ -304,8 +304,8 @@ class StorageHelpers:
         sel = self.dialog_field(field)
         ftype = self.browser.attr(sel, "data-field-type")
         if ftype == "size-slider":
-            self.browser.wait_val(sel + " .size-unit", unit)
-            self.browser.wait_val(sel + " .size-text", str(val))
+            self.browser.wait_val(sel + " .size-unit select", unit)
+            self.browser.wait_val(sel + " .size-text input", str(val))
         elif ftype == "select":
             self.browser.wait_attr(sel, "data-value", val)
         else:

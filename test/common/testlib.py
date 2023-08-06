@@ -162,7 +162,7 @@ def attach(filename: str, move: bool = False):
 
     :param filename: file to put in attachments directory
     :param move: set this to true to move dynamically generated files which
-                 are not touched by parallel tests. (default False)
+                 are not touched by destructive tests. (default False)
     """
     if not opts.attachments:
         return
@@ -543,7 +543,7 @@ class Browser:
             self.wait_val(selector, val)
 
     def set_file_autocomplete_val(self, group_identifier: str, location: str):
-        self.set_input_text(f"{group_identifier} .pf-v5-c-select__toggle-typeahead", location)
+        self.set_input_text(f"{group_identifier} .pf-v5-c-select__toggle-typeahead input", location)
         # click away the selection list, to force a state update
         self.click(f"{group_identifier} .pf-v5-c-select__toggle-typeahead")
         self.wait_not_present(f"{group_identifier} .pf-v5-c-select__menu")
@@ -965,7 +965,7 @@ class Browser:
         self.set_attr("html", "dir", direction)
 
     def set_layout(self, name: str):
-        layout = [lo for lo in self.layouts if lo["name"] == name][0]
+        layout = next(lo for lo in self.layouts if lo["name"] == name)
         if layout != self.current_layout:
             self.current_layout = layout
             size = layout["shell_size"]

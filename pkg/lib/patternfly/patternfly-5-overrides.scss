@@ -1,30 +1,11 @@
-/*** PF4 overrides ***/
+/*** PF5 overrides ***/
 // Pull in variables (for breakpoints)
 @use "global-variables" as *;
-
-// https://github.com/patternfly/patternfly-react/pull/8953
-.pf-v5-c-input-group__text {
-  padding-inline: var(--pf-v5-global--spacer--sm);
-}
 
 // PF Select is deprecated - no issue reported upstream - this needs to be removed from our codebase
 // Make select have the expected width
 .pf-v5-c-select[data-popper-reference-hidden="false"] {
   inline-size: auto;
-}
-
-// https://github.com/patternfly/patternfly/issues/5501
-.pf-v5-theme-dark {
-  .pf-v5-c-alert.pf-m-custom {
-    --pf-v5-c-alert--BackgroundColor: var(--pf-v5-global--palette--black-600);
-    --pf-v5-c-alert__title--Color: var(--pf-v5-global--custom-color--200);
-  }
-}
-
-// https://github.com/patternfly/patternfly-react/issues/8993
-.pf-v5-c-about-modal-box__close {
-  --pf-v5-c-about-modal-box__close--c-button--BackgroundColor: var(--pf-v5-global--BackgroundColor--dark-200);
-  --pf-v5-c-about-modal-box__close--c-button--hover--BackgroundColor: var(--pf-v5-global--BackgroundColor--dark-400);
 }
 
 /* WORKAROUND: Navigation problems with Tertiary Nav widget on mobile */
@@ -195,8 +176,15 @@ select.pf-v5-c-form-control {
 
 // Flex should use gap, not a margin hack
 // https://github.com/patternfly/patternfly/issues/4523
+// Override default spacing from lg -> md
 .pf-v5-l-flex {
   gap: var(--pf-v5-l-flex--spacer-base);
+  &:not([class*="pf-m-space-items-"]) {
+    > * {
+      --pf-v5-l-flex--spacer--column: 0;
+    }
+    gap: var(--pf-v5-l-flex--spacer--md);
+  }
 
   // Negate the margin hack used by immediate flex children
   // (except for nested flex, as we want to mind the gap)
@@ -207,7 +195,7 @@ select.pf-v5-c-form-control {
   // Undo all spacer modification adjustments
   &[class*="pf-m-space-items-"] {
     > * {
-      --pf-v5-l-flex--spacer: 0;
+      --pf-v5-l-flex--spacer--column: 0;
     }
   }
 
@@ -217,6 +205,39 @@ select.pf-v5-c-form-control {
     &[class*="pf-m-space-items-#{$size}"] {
       --pf-v5-l-flex--spacer-base: var(--pf-v5-l-flex--spacer--#{$size});
     }
+  }
+}
+
+// backported from https://github.com/patternfly/patternfly/pull/5788, fixed in 5.1.0-prerelease.4
+.pf-v5-c-radio {
+  display: grid;
+  width: unset;
+}
+
+// Realign the radio and checks: https://github.com/patternfly/patternfly/issues/5802
+.pf-v5-c-radio,
+.pf-v5-c-check {
+  // `baseline` is different in Firefox than Chrome & WebKit; use `normal`
+  align-items: normal;
+
+  // Remove incorrect PF settings on the children
+  &__label,
+  &__input {
+    margin-block: auto;
+    align-self: unset;
+    -moz-transform: unset;
+  }
+
+  // Slightly shift the radio and check widgets
+  &__input {
+    // Shift up the checks/radios for (most) browsers
+    transform: translateY(-1px);
+    // Mozilla doesn't need the translation, so undo it
+    -moz-transform: none;
+    // If the size is not specified, browsers may size it between 12px - 16px; so let's set it to the font size (which winds up 16px)
+    height: var(--pf-v5-global--FontSize--md);
+    // Use the height for width too
+    aspect-ratio: 1;
   }
 }
 
@@ -289,16 +310,6 @@ select.pf-v5-c-form-control {
       &:not(:focus):not(:hover)::after {
         border-block-end-color: var(--pf-v5-global--BorderColor--400);
       }
-    }
-  }
-
-  // PatternFly doesn't define gold color in dark mode
-  .pf-v5-c-label {
-    --pf-v5-c-label--m-gold--BackgroundColor: var(--pf-v5-global--BackgroundColor--300);
-    --pf-v5-c-label--m-gold__content--Color: var(--pf-v5-global--palette--gold-100);
-
-    &.pf-m-gold {
-      --pf-v5-c-label__content--Color: var(--pf-v5-c-label--m-gold__content--Color);
     }
   }
 

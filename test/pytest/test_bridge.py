@@ -27,15 +27,10 @@ class test_iface(bus.Object):
 
 
 @pytest.fixture
-def bridge(event_loop) -> Bridge:
-    async def get_bridge() -> Bridge:
-        bridge = Bridge(argparse.Namespace(privileged=False, beipack=False))
-        asyncio.set_event_loop(None)
-        # We use this for assertions
-        bridge.superuser_bridges = list(bridge.superuser_rule.bridges)  # type: ignore[attr-defined]
-        return bridge
-
-    return event_loop.run_until_complete(get_bridge())
+def bridge() -> Bridge:
+    bridge = Bridge(argparse.Namespace(privileged=False, beipack=False))
+    bridge.superuser_bridges = list(bridge.superuser_rule.bridges)  # type: ignore[attr-defined]
+    return bridge
 
 
 def add_pseudo(bridge: Bridge) -> None:
@@ -59,22 +54,17 @@ def add_pseudo(bridge: Bridge) -> None:
 
 
 @pytest.fixture
-def no_init_transport(event_loop: asyncio.AbstractEventLoop,
-                      bridge: Bridge) -> Iterable[MockTransport]:
-    async def get_transport() -> MockTransport:
-        return MockTransport(bridge)
-    transport = event_loop.run_until_complete(get_transport())
+def no_init_transport(event_loop: asyncio.AbstractEventLoop, bridge: Bridge) -> Iterable[MockTransport]:
+    transport = MockTransport(bridge)
     try:
         yield transport
     finally:
-        event_loop.run_until_complete(transport.stop())
+        transport.stop(event_loop)
 
 
 @pytest.fixture
-def transport(event_loop: asyncio.AbstractEventLoop,
-              no_init_transport: MockTransport) -> MockTransport:
-    event_loop.run_until_complete(no_init_transport.assert_msg('', command='init'))
-    no_init_transport.send_init()
+def transport(no_init_transport: MockTransport) -> MockTransport:
+    no_init_transport.init()
     return no_init_transport
 
 
@@ -286,8 +276,7 @@ async def test_superuser_dbus_wrong_pw(bridge, transport, monkeypatch):
 @pytest.mark.asyncio
 async def test_superuser_init(bridge, no_init_transport):
     add_pseudo(bridge)
-    await no_init_transport.assert_msg('', command='init')
-    no_init_transport.send_init(superuser={"id": "pseudo"})
+    no_init_transport.init(superuser={"id": "pseudo"})
     transport = no_init_transport
 
     # this should work right away without auth
@@ -300,8 +289,7 @@ async def test_superuser_init(bridge, no_init_transport):
 async def test_superuser_init_pw(bridge, no_init_transport, monkeypatch):
     monkeypatch.setenv('PSEUDO_PASSWORD', 'p4ssw0rd')
     add_pseudo(bridge)
-    await no_init_transport.assert_msg('', command='init')
-    no_init_transport.send_init(superuser={"id": "pseudo"})
+    no_init_transport.init(superuser={"id": "pseudo"})
     transport = no_init_transport
 
     msg = await transport.assert_msg('', command='authorize')
@@ -395,7 +383,7 @@ async def test_internal_metrics(transport):
     assert meta['interval'] == interval
     assert meta['source'] == source
     assert isinstance(meta['metrics'], list)
-    instances = len([m['instances'] for m in meta['metrics'] if m['name'] == 'cpu.core.user'][0])
+    instances = len(next(m['instances'] for m in meta['metrics'] if m['name'] == 'cpu.core.user'))
 
     # actual data
     _, data = await transport.next_frame()
@@ -452,12 +440,7 @@ async def test_fslist1_notexist(transport):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('channeltype', CHANNEL_TYPES)
-async def test_channel(channeltype, tmp_path):
-    bridge = Bridge(argparse.Namespace(privileged=False, beipack=False))
-    transport = MockTransport(bridge)
-    await transport.assert_msg('', command='init')
-    transport.send_init()
-
+async def test_channel(bridge, transport, channeltype, tmp_path):
     payload = channeltype.payload
     args = dict(channeltype.restrictions)
 
