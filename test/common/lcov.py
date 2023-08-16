@@ -29,6 +29,7 @@ import itertools
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from bisect import bisect_left
@@ -260,7 +261,7 @@ class DiffMap:
         return None
 
     def find_source(self, diff_line):
-        return self.source_map[diff_line]
+        return self.source_map.get(diff_line)
 
 
 def print_diff_coverage(path, file_hits, out):
@@ -424,7 +425,10 @@ def get_review_comments(diff_info_file):
             if line.startswith("DA:"):
                 parts = line[3:].split(",")
                 if int(parts[1]) == 0:
-                    (src, line, text) = dm.find_source(int(parts[0]))
+                    info = dm.find_source(int(parts[0]))
+                    if not info:
+                        continue
+                    (src, line, text) = info
                     if not is_interesting_line(text):
                         continue
                     if src == cur_src and line == cur_line + 1:
@@ -442,14 +446,15 @@ def get_review_comments(diff_info_file):
 def prepare_for_code_coverage():
     # This gives us a convenient link at the top of the logs, see link-patterns.json
     print("Code coverage report in Coverage/index.html")
-    os.makedirs("lcov", exist_ok=True)
+    if os.path.exists("lcov"):
+        shutil.rmtree("lcov")
+    os.makedirs("lcov")
     # Detect the default branch to compare with, Anaconda still uses master as main.
     branch = "main"
     try:
         subprocess.check_call(["git", "rev-parse", "--quiet", "--verify", branch], stdout=subprocess.DEVNULL)
     except subprocess.SubprocessError:
         branch = "master"
-
     with open("lcov/github-pr.diff", "w") as f:
         subprocess.check_call(["git", "-c", "diff.noprefix=false", "diff", "--patience", branch], stdout=f)
 

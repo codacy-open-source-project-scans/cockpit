@@ -624,7 +624,7 @@ class CurrentMetrics extends React.Component {
     getCachedPodName = (uid, containerid) => this.state.podNameMapping[uid] && this.state.podNameMapping[uid][containerid];
 
     cgroupRow = (name, is_user, is_container, uid, ...values) => {
-        const podman_installed = cockpit.manifests && cockpit.manifests.podman;
+        const podman_installed = cockpit.manifests?.podman;
 
         const cgroupClickHandler = (name, isUser, isContainer, uid) => {
             if (isContainer) {
@@ -705,7 +705,6 @@ class CurrentMetrics extends React.Component {
         const memUsedFraction = memTotal ? this.state.memUsed / memTotal : 0;
         const memAvail = memTotal ? (memTotal - this.state.memUsed) : 0;
         const num_cpu_str = cockpit.format(cockpit.ngettext("$0 CPU", "$0 CPUs", numCpu), numCpu);
-        const have_storage = cockpit.manifests && cockpit.manifests.storage;
 
         const netIO = this.netInterfacesNames.map((iface, i) => [
             iface,
@@ -940,7 +939,7 @@ class CurrentMetrics extends React.Component {
                                         title={info.target}
                                         label={ cockpit.format(_("$0 free"), cockpit.format_bytes(info.avail, 1000)) } />
                                 );
-                                if (have_storage)
+                                if (cockpit.manifests?.storage)
                                     progress = <Button variant="link" isInline onClick={() => cockpit.jump("/storage") }>{progress}</Button>;
 
                                 return (
@@ -1579,6 +1578,7 @@ class MetricsHistory extends React.Component {
             isDatepickerOpened: false,
             selectedDate: null,
             packagekitExists: false,
+            isBeibootBridge: false,
             selectedVisibility: this.columns.reduce((a, v) => ({ ...a, [v[0]]: true }), {})
         };
 
@@ -1632,10 +1632,17 @@ class MetricsHistory extends React.Component {
                 .catch(ex => this.setState({ error: ex.toString() }));
     }
 
-    componentDidMount() {
-        packagekit.detect().then(exists => {
-            this.setState({ packagekitExists: exists });
-        });
+    async componentDidMount() {
+        const packagekitExists = await packagekit.detect();
+        // HACK: See https://github.com/cockpit-project/cockpit/issues/19143
+        let cmdline = "";
+        try {
+            cmdline = await cockpit.file("/proc/self/cmdline").read();
+        } catch (_ex) {}
+
+        const isBeibootBridge = cmdline?.includes("ic# cockpit-bridge");
+
+        this.setState({ packagekitExists, isBeibootBridge });
     }
 
     handleMoreData() {
@@ -1797,11 +1804,16 @@ class MetricsHistory extends React.Component {
                         action={<Button onClick={() => cockpit.logout(true)}>{_("Log out")}</Button>}
             />;
 
-        if (cockpit.manifests && !cockpit.manifests.pcp)
+        // on a single machine, cockpit-pcp depends on pcp; but this may not be the case in the beiboot scenario,
+        // so additionally check if pcp is available on the logged in target machine
+        if ((cockpit.manifests && !cockpit.manifests.pcp) || this.pmlogger_service.exists === false)
             return <EmptyStatePanel
                         icon={ExclamationCircleIcon}
                         title={_("Package cockpit-pcp is missing for metrics history")}
-                        action={this.state.packagekitExists ? <Button onClick={() => this.handleInstall()}>{_("Install cockpit-pcp")}</Button> : null}
+                        action={this.state.isBeibootBridge === true
+                            // See https://github.com/cockpit-project/cockpit/issues/19143
+                            ? <Text>{ _("Installation not supported without installed cockpit package") }</Text>
+                            : this.state.packagekitExists && <Button onClick={this.handleInstall}>{_("Install cockpit-pcp")}</Button>}
             />;
 
         if (!this.state.metricsAvailable) {
