@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # This file is part of Cockpit.
 #
 # Copyright (C) 2022 Red Hat, Inc.
@@ -35,6 +33,7 @@ from cockpit.beipack import BridgeBeibootHelper
 from cockpit.bridge import setup_logging
 from cockpit.channel import ChannelRoutingRule
 from cockpit.channels import PackagesChannel
+from cockpit.jsonutil import JsonObject
 from cockpit.packages import Packages, PackagesLoader
 from cockpit.peer import Peer
 from cockpit.protocol import CockpitProblem
@@ -73,18 +72,10 @@ def ensure_ferny_askpass() -> Path:
 
 
 def get_interesting_files() -> Iterable[str]:
-    for candidate in PackagesLoader.load_candidates():
-        try:
-            conditions = candidate.manifest['conditions']
-        except KeyError:
-            continue
-
-        assert isinstance(conditions, list)
-        for condition in conditions:
-            assert isinstance(condition, dict)
-            for key, value in condition.items():
-                if key in ['path-exists', 'path-not-exists']:
-                    yield value
+    for manifest in PackagesLoader.load_manifests():
+        for condition in manifest.conditions:
+            if condition.name in ('path-exists', 'path-not-exists') and isinstance(condition.value, str):
+                yield condition.value
 
 
 class ProxyPackagesLoader(PackagesLoader):
@@ -122,7 +113,7 @@ class DefaultRoutingRule(RoutingRule):
         super().__init__(router)
         self.peer = peer
 
-    def apply_rule(self, options: dict[str, object]) -> Peer:
+    def apply_rule(self, options: JsonObject) -> Peer:
         return self.peer
 
     def shutdown(self) -> None:
@@ -171,7 +162,8 @@ class AuthorizeResponder(ferny.InteractionResponder):
 
         if command == 'cockpit.report-exists':
             file_status, = args
-            self.router.packages = Packages(loader=ProxyPackagesLoader(file_status))
+            # FIXME: evil duck typing here -- this is a half-way Bridge
+            self.router.packages = Packages(loader=ProxyPackagesLoader(file_status))  # type: ignore[attr-defined]
             self.router.routing_rules.insert(0, ChannelRoutingRule(self.router, [PackagesChannel]))
 
 
@@ -183,7 +175,7 @@ class SshPeer(Peer):
         self.always = args.always
         super().__init__(router)
 
-    async def do_connect_transport(self) -> asyncio.Transport:
+    async def do_connect_transport(self) -> None:
         beiboot_helper = BridgeBeibootHelper(self)
 
         agent = ferny.InteractionAgent(AuthorizeResponder(self.router))
@@ -229,9 +221,7 @@ class SshPeer(Peer):
         # Wait for "init" or error, handling auth and beiboot requests
         await agent.communicate()
 
-        return transport
-
-    def transport_control_received(self, command: str, message: Dict[str, object]) -> None:
+    def transport_control_received(self, command: str, message: JsonObject) -> None:
         if command == 'authorize':
             # We've disabled this for explicit-superuser bridges, but older
             # bridges don't support that and will ask us anyway.
@@ -277,7 +267,12 @@ async def run(args) -> None:
 
         # See comment in do_init() above: we tell cockpit-ws that we support
         # this and then handle it ourselves when we get the init message.
-        message.setdefault('capabilities', {})['explicit-superuser'] = True
+        capabilities = message.setdefault('capabilities', {})
+        if not isinstance(capabilities, dict):
+            bridge.write_control(command='init', problem='protocol-error', message='capabilities must be a dict')
+            return
+        assert isinstance(capabilities, dict)  # convince mypy
+        capabilities['explicit-superuser'] = True
 
         # only patch the packages line if we are in beiboot mode
         if bridge.packages:

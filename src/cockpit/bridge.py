@@ -17,6 +17,7 @@
 
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -24,7 +25,7 @@ import pwd
 import shlex
 import socket
 import subprocess
-from typing import Dict, Iterable, List, Optional, Tuple, Type
+from typing import Iterable, List, Optional, Tuple, Type
 
 from cockpit._vendor.ferny import interaction_client
 from cockpit._vendor.systemd_ctypes import bus, run_async
@@ -34,7 +35,8 @@ from .channel import ChannelRoutingRule
 from .channels import CHANNEL_TYPES
 from .config import Config, Environment
 from .internal_endpoints import EXPORTS
-from .packages import Packages, PackagesListener
+from .jsonutil import JsonError, JsonObject, get_dict
+from .packages import BridgeConfig, Packages, PackagesListener
 from .peer import PeersRoutingRule
 from .remote import HostRoutingRule
 from .router import Router
@@ -60,7 +62,7 @@ class InternalBus:
 class Bridge(Router, PackagesListener):
     internal_bus: InternalBus
     packages: Optional[Packages]
-    bridge_rules: List[Dict[str, object]]
+    bridge_rules: List[JsonObject]
     args: argparse.Namespace
 
     def __init__(self, args: argparse.Namespace):
@@ -78,13 +80,13 @@ class Bridge(Router, PackagesListener):
 
         if args.beipack:
             # Some special stuff for beipack
-            self.superuser_rule.set_configs([
-                {
+            self.superuser_rule.set_configs((
+                BridgeConfig({
                     "privileged": True,
                     "spawn": ["sudo", "-k", "-A", "python3", "-ic", "# cockpit-bridge", "--privileged"],
                     "environ": ["SUDO_ASKPASS=ferny-askpass"],
-                }
-            ])
+                }),
+            ))
             self.packages = None
         elif args.privileged:
             self.packages = None
@@ -125,9 +127,11 @@ class Bridge(Router, PackagesListener):
             os_release[k] = v_parsed
         return os_release
 
-    def do_init(self, message: Dict[str, object]) -> None:
-        superuser = message.get('superuser')
-        if isinstance(superuser, dict):
+    def do_init(self, message: JsonObject) -> None:
+        # we're only interested in the case where this is a dict, but
+        # 'superuser' may well be `False` and that's not an error
+        with contextlib.suppress(JsonError):
+            superuser = get_dict(message, 'superuser')
             self.superuser_rule.init(superuser)
 
     def do_send_init(self) -> None:

@@ -2,6 +2,7 @@ import asyncio
 import json
 from typing import Any, Dict, Iterable, Optional, Tuple
 
+from cockpit.jsonutil import JsonDocument, JsonObject
 from cockpit.router import Router
 
 MOCK_HOSTNAME = 'mockbox'
@@ -17,7 +18,8 @@ class MockTransport(asyncio.Transport):
         assert self.queue.qsize() == 0
 
     def send_json(self, _channel: str, **kwargs) -> None:
-        msg = {k.replace('_', '-'): v for k, v in kwargs.items()}
+        # max_read_size is one of our special keys which uses underscores
+        msg = {k.replace('_', '-') if k != "max_read_size" else k: v for k, v in kwargs.items()}
         self.send_data(_channel, json.dumps(msg).encode('ascii'))
 
     def send_data(self, channel: str, data: bytes) -> None:
@@ -51,7 +53,7 @@ class MockTransport(asyncio.Transport):
         payload,
         channel=None,
         problem=None,
-        reply_keys: Optional[Dict[str, object]] = None,
+        reply_keys: Optional[JsonObject] = None,
         **kwargs,
     ):
         assert isinstance(self.protocol, Router)
@@ -118,7 +120,7 @@ class MockTransport(asyncio.Transport):
         assert channel == expected_channel
         assert data == expected_data
 
-    async def assert_msg(self, expected_channel, **kwargs) -> Dict[str, object]:
+    async def assert_msg(self, expected_channel: str, **kwargs: JsonDocument) -> JsonObject:
         msg = await self.next_msg(expected_channel)
         assert msg == dict(msg, **{k.replace('_', '-'): v for k, v in kwargs.items()}), msg
         return msg
@@ -177,7 +179,7 @@ class MockTransport(asyncio.Transport):
         return await self.assert_bus_reply(tag, expected_reply, bus=bus)
 
     async def assert_bus_props(
-        self, path: str, iface: str, expected_values: Dict[str, object], bus: Optional[str] = None
+        self, path: str, iface: str, expected_values: JsonObject, bus: Optional[str] = None
     ) -> None:
         (values,) = await self.check_bus_call(path, 'org.freedesktop.DBus.Properties', 'GetAll', [iface], bus=bus)
         for key, value in expected_values.items():
@@ -200,7 +202,7 @@ class MockTransport(asyncio.Transport):
         self,
         path: str,
         iface: str,
-        expected: Dict[str, object],
+        expected: JsonObject,
         bus: Optional[str] = None,
     ) -> None:
         if bus is None:
@@ -209,7 +211,7 @@ class MockTransport(asyncio.Transport):
         assert 'notify' in notify
         assert notify['notify'][path][iface] == expected
 
-    async def watch_bus(self, path: str, iface: str, expected: Dict[str, object], bus: Optional[str] = None) -> None:
+    async def watch_bus(self, path: str, iface: str, expected: JsonObject, bus: Optional[str] = None) -> None:
         if bus is None:
             bus = await self.ensure_internal_bus()
         tag = self.get_id('watch')

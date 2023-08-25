@@ -18,10 +18,11 @@
 import asyncio
 import logging
 import threading
-from typing import Dict, Optional
+from typing import Optional
 
 from ..channel import Channel
 from ..data import read_cockpit_data_file
+from ..jsonutil import JsonObject, get_dict, get_str
 from ..packages import Packages
 
 logger = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ class PackagesChannel(Channel):
     restrictions = [("internal", "packages")]
 
     # used to carry data forward from open to done
-    options: Optional[Dict[str, object]] = None
+    options: Optional[JsonObject] = None
 
     def http_error(self, status: int, message: str) -> None:
         template = read_cockpit_data_file('fail.html')
@@ -41,7 +42,7 @@ class PackagesChannel(Channel):
         self.done()
         self.close()
 
-    def do_open(self, options: Dict[str, object]) -> None:
+    def do_open(self, options: JsonObject) -> None:
         self.ready()
 
         self.options = options
@@ -52,17 +53,11 @@ class PackagesChannel(Channel):
         options = self.options
 
         try:
-            if options.get('method') != 'GET':
+            if get_str(options, 'method') != 'GET':
                 raise ValueError(f'Unsupported HTTP method {options["method"]}')
 
-            path = options.get('path')
-            if not isinstance(path, str) or not path.startswith('/'):
-                raise ValueError(f'Unsupported HTTP method {options["method"]}')
-
-            headers = options.get('headers')
-            if not isinstance(headers, dict) or not all(isinstance(value, str) for value in headers.values()):
-                raise ValueError(f'Unsupported HTTP method {options["method"]}')
-
+            path = get_str(options, 'path')
+            headers = get_dict(options, 'headers')
             document = packages.load_path(path, headers)
 
             # Note: we can't cache documents right now.  See

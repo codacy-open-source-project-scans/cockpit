@@ -19,6 +19,7 @@
 
 import { get_parent } from "./utils.js";
 import { check_mismounted_fsys } from "./fsys-tab.jsx";
+import { check_stratis_warnings } from "./stratis-details.jsx";
 
 export function find_warnings(client) {
     const path_warnings = { };
@@ -72,6 +73,7 @@ export function find_warnings(client) {
         const fsys = client.blocks_fsys[content_path];
         const content_block = client.blocks[content_path];
         const vdo = content_block ? client.legacy_vdo_overlay.find_by_backing_block(content_block) : null;
+        const stratis_bdev = client.blocks_stratis_blockdev[content_path];
 
         if (fsys && fsys.Size && (lvol.Size - fsys.Size - crypto_overhead) > vgroup.ExtentSize && fsys.Resize) {
             enter_warning(path, {
@@ -88,12 +90,22 @@ export function find_warnings(client) {
                 content_size: vdo.physical_size
             });
         }
+
+        if (stratis_bdev && (lvol.Size - Number(stratis_bdev.TotalPhysicalSize) - crypto_overhead) > vgroup.ExtentSize) {
+            enter_warning(path, {
+                warning: "unused-space",
+                volume_size: lvol.Size - crypto_overhead,
+                content_size: Number(stratis_bdev.TotalPhysicalSize)
+            });
+        }
     }
 
     for (const path in client.blocks) {
         check_unused_space(path);
         check_mismounted_fsys(client, path, enter_warning);
     }
+
+    check_stratis_warnings(client, enter_warning);
 
     return path_warnings;
 }

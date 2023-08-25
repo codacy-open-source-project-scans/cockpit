@@ -406,6 +406,37 @@ function update_indices() {
         }
     }
 
+    client.stratis_pool_stats = { };
+    for (path in client.stratis_pools) {
+        const pool = client.stratis_pools[path];
+        const filesystems = client.stratis_pool_filesystems[path];
+
+        const fsys_offsets = [];
+        let fsys_total_used = 0;
+        let fsys_total_size = 0;
+        filesystems.forEach(fs => {
+            fsys_offsets.push(fsys_total_used);
+            fsys_total_used += fs.Used[0] ? Number(fs.Used[1]) : 0;
+            fsys_total_size += Number(fs.Size);
+        });
+
+        const overhead = pool.TotalPhysicalUsed[0] ? (Number(pool.TotalPhysicalUsed[1]) - fsys_total_used) : 0;
+        const pool_total = Number(pool.TotalPhysicalSize) - overhead;
+        let pool_free = pool_total - fsys_total_size;
+
+        // leave some margin since the above computation does not seem to
+        // be exactly right when snapshots are involved.
+        pool_free -= filesystems.length * 1024 * 1024;
+
+        client.stratis_pool_stats[path] = {
+            fsys_offsets,
+            fsys_total_used,
+            fsys_total_size,
+            pool_total,
+            pool_free,
+        };
+    }
+
     client.blocks_cleartext = { };
     for (path in client.blocks) {
         block = client.blocks[path];
@@ -995,17 +1026,32 @@ function stratis3_start() {
                                                              clevis_info ? [true, clevis_info] : [false, ["", ""]]);
                 };
 
+                client.stratis_set_overprovisioning = (pool, flag) => {
+                    // DBusProxy is smart enough to allow
+                    // "pool.Overprovisioning = flag" to just work,
+                    // but we want to catch any error ourselves, and
+                    // we want to wait for the method call to
+                    // complete.
+                    return stratis.call(pool.path, "org.freedesktop.DBus.Properties", "Set",
+                                        ["org.storage.stratis3.pool." + stratis3_interface_revision,
+                                            "Overprovisioning",
+                                            cockpit.variant("b", flag)
+                                        ]);
+                };
+
                 client.stratis_list_keys = () => {
                     return client.stratis_manager.ListKeys();
                 };
 
-                client.stratis_create_filesystem = (pool, name) => {
-                    return pool.CreateFilesystems([[name, [false, ""]]]);
+                client.stratis_create_filesystem = (pool, name, size) => {
+                    return pool.CreateFilesystems([[name, size ? [true, size.toString()] : [false, ""]]]);
                 };
 
                 client.features.stratis = true;
                 client.features.stratis_crypto_binding = true;
                 client.features.stratis_encrypted_caches = true;
+                client.features.stratis_managed_fsys_sizes = true;
+                client.features.stratis_grow_blockdevs = true;
                 client.stratis_pools = client.stratis_manager.client.proxies("org.storage.stratis3.pool." +
                                                                              stratis3_interface_revision,
                                                                              "/org/storage/stratis3",
