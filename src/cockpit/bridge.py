@@ -25,12 +25,13 @@ import pwd
 import shlex
 import socket
 import subprocess
-from typing import Iterable, List, Optional, Tuple, Type
+from typing import Iterable, List, Optional, Sequence, Tuple, Type
 
 from cockpit._vendor.ferny import interaction_client
 from cockpit._vendor.systemd_ctypes import bus, run_async
 
 from . import polyfills
+from ._version import __version__
 from .channel import ChannelRoutingRule
 from .channels import CHANNEL_TYPES
 from .config import Config, Environment
@@ -62,12 +63,12 @@ class InternalBus:
 class Bridge(Router, PackagesListener):
     internal_bus: InternalBus
     packages: Optional[Packages]
-    bridge_rules: List[JsonObject]
+    bridge_configs: Sequence[BridgeConfig]
     args: argparse.Namespace
 
     def __init__(self, args: argparse.Namespace):
         self.internal_bus = InternalBus(EXPORTS)
-        self.bridge_rules = []
+        self.bridge_configs = []
         self.args = args
 
         self.superuser_rule = SuperuserRoutingRule(self, privileged=args.privileged)
@@ -146,9 +147,10 @@ class Bridge(Router, PackagesListener):
         self.write_control(command='init', version=1, **init_args)
 
     # PackagesListener interface
-    def packages_loaded(self):
+    def packages_loaded(self) -> None:
+        assert self.packages
         bridge_configs = self.packages.get_bridge_configs()
-        if self.bridge_rules != bridge_configs:
+        if self.bridge_configs != bridge_configs:
             self.superuser_rule.set_configs(bridge_configs)
             self.peers_rule.set_configs(bridge_configs)
             self.bridge_configs = bridge_configs
@@ -253,7 +255,6 @@ def main(*, beipack: bool = False) -> None:
     parser.add_argument('--privileged', action='store_true', help='Privileged copy of the bridge')
     parser.add_argument('--packages', action='store_true', help='Show Cockpit package information')
     parser.add_argument('--bridges', action='store_true', help='Show Cockpit bridges information')
-    parser.add_argument('--rules', action='store_true', help='Show Cockpit bridge rules')
     parser.add_argument('--debug', action='store_true', help='Enable debug output (very verbose)')
     parser.add_argument('--version', action='store_true', help='Show Cockpit version information')
     args = parser.parse_args()
@@ -274,6 +275,9 @@ def main(*, beipack: bool = False) -> None:
     # Special modes
     if args.packages:
         Packages().show()
+        return
+    elif args.version:
+        print(f'Version: {__version__}\nProtocol: 1')
         return
     elif args.bridges:
         print(json.dumps(Packages().get_bridge_configs(), indent=2))
