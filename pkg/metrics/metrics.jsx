@@ -223,23 +223,16 @@ function decompress_samples(samples, state) {
     });
 }
 
-function make_rows(rows, rowWrapper, _columns) {
-    return rows.map((columns, rowIndex) => {
-        const props = rowWrapper ? rowWrapper(columns) : {};
-
-        return (
-            <Tr key={"row-" + rowIndex} {...props}>
-                {columns.map((column, columnIndex) => {
-                    const dataLabel = _columns && _columns[columnIndex];
-                    return (
-                        <Td data-label={dataLabel} key={"column-" + columnIndex}>
-                            {column}
-                        </Td>
-                    );
-                })}
-            </Tr>
-        );
-    });
+function make_rows(rows, rowProps, columnLabels) {
+    return rows.map((columns, rowIndex) =>
+        <Tr key={"row-" + rowIndex} {...rowProps?.(columns)}>
+            {columns.map((column, columnIndex) =>
+                <Td data-label={columnLabels?.[columnIndex]} key={"column-" + columnIndex}>
+                    {column}
+                </Td>
+            )}
+        </Tr>
+    );
 }
 
 class CurrentMetrics extends React.Component {
@@ -257,6 +250,7 @@ class CurrentMetrics extends React.Component {
         this.cgroupMemoryNames = [];
         this.cgroupDiskNames = [];
         this.disksNames = [];
+        this.cpuTemperature = null;
         this.cpuTemperatureColors = {
             textColor: "",
             iconColor: "",
@@ -325,7 +319,7 @@ class CurrentMetrics extends React.Component {
 
         if (!cockpit.hidden && (this.temperature_channel === null)) {
             this.temperature_channel = cockpit.channel({ payload: "metrics1", source: "internal", interval: INTERVAL, metrics: CPU_TEMPERATURE_METRICS });
-            this.temperature_channel.addEventListener("close", (ev, error) => console.error("CPU temperature metric closed:", error));
+            this.temperature_channel.addEventListener("close", (ev, error) => console.warn("CPU temperature metric closed:", error));
             this.temperature_channel.addEventListener("message", this.onTemperatureUpdate);
         }
 
@@ -431,7 +425,13 @@ class CurrentMetrics extends React.Component {
 
         data.forEach(temperatureSamples => decompress_samples(temperatureSamples, this.temperatureSamples));
 
-        this.cpuTemperature = parseInt(Math.max(...this.temperatureSamples[0]));
+        if (this.temperatureSamples[0].length > 0) {
+            this.cpuTemperature = Math.round(Math.max(...this.temperatureSamples[0]));
+        } else {
+            // close the channel when bridge couldn't sample temperature
+            this.temperature_channel.close("No samples received");
+            return;
+        }
 
         if (this.cpuTemperature <= 80) {
             this.cpuTemperatureColors.textColor = "";
@@ -707,7 +707,7 @@ class CurrentMetrics extends React.Component {
         const num_cpu_str = cockpit.format(cockpit.ngettext("$0 CPU", "$0 CPUs", numCpu), numCpu);
 
         const netIO = this.netInterfacesNames.map((iface, i) => [
-            iface,
+            <Button variant="link" isInline onClick={() => cockpit.jump(`/network#/${iface}`) } key={iface}>{iface}</Button>,
             this.state.netInterfacesRx[i] >= 1 ? cockpit.format_bytes_per_sec(this.state.netInterfacesRx[i]) : "0",
             this.state.netInterfacesTx[i] >= 1 ? cockpit.format_bytes_per_sec(this.state.netInterfacesTx[i]) : "0",
         ]);
@@ -780,7 +780,7 @@ class CurrentMetrics extends React.Component {
             : [];
 
         let allDisks = null;
-        const rowWrapperDisks = row => ({ 'device-name': row[0] });
+        const rowPropsDisks = row => ({ 'device-name': row[0] });
         const diskColumns = [_("Device"), _("Read"), _("Write")];
         if (disksUsage.length > 1) {
             const disksTableContent = (
@@ -793,7 +793,7 @@ class CurrentMetrics extends React.Component {
                         <Tr>{diskColumns.map(col => <Th key={col}>{col}</Th>)}</Tr>
                     </Thead>
                     <Tbody className="pf-v5-m-tabular-nums disks-nowrap">
-                        {make_rows(disksUsage, rowWrapperDisks, diskColumns)}
+                        {make_rows(disksUsage, rowPropsDisks, diskColumns)}
                     </Tbody>
                 </Table>
             );
@@ -805,8 +805,9 @@ class CurrentMetrics extends React.Component {
             );
         }
 
-        const rowWrapperIface = row => ({ 'data-interface': row[0] });
-        const rowWrapperDiskIO = row => ({ 'cgroup-name': row[0] });
+        // first element is the jump button, key is interface name
+        const rowPropsIface = row => ({ 'data-interface': row[0].key });
+        const rowPropsDiskIO = row => ({ 'cgroup-name': row[0] });
         const topServicesCPUColumns = [_("Service"), "%"];
         const topServicesMemoryColumns = [_("Service"), _("Used")];
         const ifaceColumns = [_("Interface"), _("In"), _("Out")];
@@ -816,7 +817,7 @@ class CurrentMetrics extends React.Component {
                 <Card id="current-metrics-card-cpu">
                     <CardHeader className='align-baseline'>
                         <CardTitle>{ _("CPU") }</CardTitle>
-                        { !isNaN(this.cpuTemperature) &&
+                        { this.cpuTemperature !== null &&
                         <span className="temperature">
                             <span className={this.cpuTemperatureColors.iconColor}>
                                 {this.cpuTemperatureColors.icon}
@@ -967,7 +968,7 @@ class CurrentMetrics extends React.Component {
                                     </Tr>
                                 </Thead>
                                 <Tbody className="pf-v5-m-tabular-nums">
-                                    {make_rows(this.state.topServicesDiskIO, rowWrapperDiskIO, [_("Service"), _("Read"), _("Write")])}
+                                    {make_rows(this.state.topServicesDiskIO, rowPropsDiskIO, [_("Service"), _("Read"), _("Write")])}
                                 </Tbody>
                             </Table> }
                     </CardBody>
@@ -988,7 +989,7 @@ class CurrentMetrics extends React.Component {
                                 <Tr>{ifaceColumns.map(col => <Th key={col}>{col}</Th>)}</Tr>
                             </Thead>
                             <Tbody className="network-nowrap-shrink">
-                                {make_rows(netIO, rowWrapperIface, ifaceColumns)}
+                                {make_rows(netIO, rowPropsIface, ifaceColumns)}
                             </Tbody>
                         </Table>
                     </CardBody>

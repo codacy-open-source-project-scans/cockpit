@@ -98,11 +98,19 @@ export const ApplicationList = ({ metainfo_db, appProgress, appProgressTitle, ac
         comps.push(metainfo_db.components[id]);
     comps.sort((a, b) => a.name.localeCompare(b.name));
 
-    function get_config(name, distro_id, def) {
+    function get_config(name, os_release, def) {
+        // ID is a single value, ID_LIKE is a list
+        const os_list = [os_release.ID || "", ...(os_release.ID_LIKE || "").split(/\s+/)];
+
         if (cockpit.manifests.apps && cockpit.manifests.apps.config) {
-            let val = cockpit.manifests.apps.config[name];
-            if (typeof val === 'object' && val !== null && !Array.isArray(val))
-                val = val[distro_id];
+            const val = cockpit.manifests.apps.config[name];
+            if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+                for (const os of os_list) {
+                    if (val[os])
+                        return val[os];
+                }
+                return def;
+            }
             return val !== undefined ? val : def;
         } else {
             return def;
@@ -112,8 +120,8 @@ export const ApplicationList = ({ metainfo_db, appProgress, appProgressTitle, ac
     function refresh() {
         read_os_release().then(os_release =>
             PackageKit.refresh(metainfo_db.origin_files,
-                               get_config('appstream_config_packages', os_release.ID, []),
-                               get_config('appstream_data_packages', os_release.ID, []),
+                               get_config('appstream_config_packages', os_release, []),
+                               get_config('appstream_data_packages', os_release, []),
                                setProgress))
                 .finally(() => setProgress(false))
                 .catch(show_error);
@@ -121,7 +129,7 @@ export const ApplicationList = ({ metainfo_db, appProgress, appProgressTitle, ac
 
     let refresh_progress, refresh_button, tbody;
     if (progress) {
-        refresh_progress = <ProgressBar size="sm" title={_("Checking for new applications")} data={progress} />;
+        refresh_progress = <ProgressBar id="refresh-progress" size="sm" title={_("Checking for new applications")} data={progress} />;
         refresh_button = <CancelButton data={progress} />;
     } else {
         refresh_progress = null;
@@ -145,9 +153,13 @@ export const ApplicationList = ({ metainfo_db, appProgress, appProgressTitle, ac
                 <Flex alignItems={{ default: 'alignItemsCenter' }}>
                     <h2 className="pf-v5-u-font-size-3xl">{_("Applications")}</h2>
                     <FlexItem align={{ default: 'alignRight' }}>
-                        <Flex>
-                            {refresh_progress}
-                            {refresh_button}
+                        <Flex alignItems={{ default: 'alignItemsCenter' }} spacer={{ default: 'spacerXs' }}>
+                            <FlexItem>
+                                {refresh_progress}
+                            </FlexItem>
+                            <FlexItem>
+                                {refresh_button}
+                            </FlexItem>
                         </Flex>
                     </FlexItem>
                 </Flex>

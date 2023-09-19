@@ -75,7 +75,7 @@ def prepareArchive(machine, name, time, hostname="localhost.localdomain"):
 
 
 def redisService(image):
-    if image.startswith("debian") or image.startswith("ubuntu"):
+    if image.startswith(("debian", "ubuntu")):
         return "redis-server"
     return "redis"
 
@@ -277,14 +277,16 @@ class TestHistoryMetrics(testlib.MachineCase):
         b.wait_in_text("#metrics-hour-1597662000000:not(.metrics-hour-compressed) .metrics-events-hour-header-expanded .spikes_count", "3 spikes")
         b.wait_in_text("#metrics-hour-1597662000000:not(.metrics-hour-compressed) .metrics-events-hour-header-expanded .spikes_info", "1 Memory, 1 Disk I/O, 1 Network I/O")
 
-        b.assert_pixels(".metrics", "metrics-history-expanded-hour", ignore=[".spikes_count"])
+        b.assert_pixels(".metrics", "metrics-history-expanded-hour", ignore=[".spikes_count"],
+                        wait_after_layout_change=True)
 
         b.click("#metrics-hour-1597662000000 button.metrics-events-expander")
         b.wait_in_text("#metrics-hour-1597662000000.metrics-hour-compressed", "1:00")
         b.wait_in_text("#metrics-hour-1597662000000.metrics-hour-compressed .spikes_count", "3 spikes")
         b.wait_in_text("#metrics-hour-1597662000000.metrics-hour-compressed .spikes_info", "1 Memory, 1 Disk I/O, 1 Network I/O")
 
-        b.assert_pixels(".metrics", "metrics-history-compressed-hour", ignore=[".nodata"], skip_layouts=["mobile", "rtl"])
+        b.assert_pixels(".metrics", "metrics-history-compressed-hour", ignore=[".nodata"],
+                        wait_after_layout_change=True)
 
         # Check that events are not visible for compressed hours
         b.wait_not_present("#metrics-hour-1597662000000 div.metrics-minute[data-minute='28'] .metrics-events")
@@ -1241,6 +1243,10 @@ BEGIN {{
         b.wait_in_text("[aria-label='Network usage'] [data-interface='cockpittest1']", "cockpittest1")
         b.wait_in_text("[aria-label='Network usage'] [data-interface='lo']", "lo")
 
+        # can jump to network interface details
+        b.wait_visible("[aria-label='Network usage'] [data-interface='cockpittest1'] button")
+        b.wait_visible("[aria-label='Network usage'] [data-interface='lo'] button")
+
         def rateMatches(label, regexp):
             text = b.text(f"[aria-label='Network usage'] [data-interface='lo'] td[data-label='{label}']")
             return re.match(regexp, text) is not None
@@ -1258,6 +1264,18 @@ BEGIN {{
         # nothing happens on cockpittest1
         b.wait_text("[aria-label='Network usage'] [data-interface='cockpittest1'] td[data-label='In']", "0")
         b.wait_text("[aria-label='Network usage'] [data-interface='cockpittest1'] td[data-label='Out']", "0")
+
+        b.click("[aria-label='Network usage'] [data-interface='lo'] button")
+        b.enter_page("/network")
+        b.wait_visible("#network-interface-name:contains('lo')")
+        b.wait_in_text(".network-interface-details", "This device cannot be managed here.")
+
+        b.go("/metrics")
+        b.enter_page("/metrics")
+        b.click("[aria-label='Network usage'] [data-interface='cockpittest1'] button")
+        b.enter_page("/network")
+        b.wait_visible("#network-interface-name:contains('cockpittest1')")
+        b.wait_in_text(".network-interface-details", "This device cannot be managed here.")
 
 
 @testlib.skipImage("TODO: Arch Linux packagekit support", "arch")
@@ -1404,21 +1422,22 @@ class TestMultiCPU(testlib.MachineCase):
         # Test current usage of cores
         b.wait_text("#current-cpu-usage-description", "2 CPUs")
         b.wait(lambda: progressValue(self, "#current-cpu-usage") < 20)
-        m.execute("systemd-run --collect --slice cockpittest -p CPUQuota=60% --unit cpu-hog dd if=/dev/urandom of=/dev/null")
-        m.execute("systemd-run --collect --slice cockpittest -p CPUQuota=30% --unit cpu-piglet dd if=/dev/urandom of=/dev/null")
+        m.execute("systemd-run --collect --slice cockpittest -p CPUQuota=50% --unit cpu-hog dd if=/dev/urandom of=/dev/null")
+        m.execute("systemd-run --collect --slice cockpittest -p CPUQuota=20% --unit cpu-piglet dd if=/dev/urandom of=/dev/null")
         # View all CPUs
         b.click("#current-metrics-card-cpu button")
-        b.wait(lambda: int(b.text(".pf-v5-c-popover .cpu-all dd:nth-of-type(1)")[:-1]) > 50)
-        b.wait(lambda: int(b.text(".pf-v5-c-popover .cpu-all dd:nth-of-type(2)")[:-1]) > 20)
+        b.wait(lambda: int(b.text(".pf-v5-c-popover .cpu-all dd:nth-of-type(1)")[:-1]) > 40)
+        b.wait(lambda: int(b.text(".pf-v5-c-popover .cpu-all dd:nth-of-type(2)")[:-1]) > 15)
         b.click(".pf-v5-c-popover button")
         b.wait_not_present(".pf-v5-c-popover")
 
         # the top CPU core runs cpu-hog
-        b.wait(lambda: progressValue(self, "#current-top-cpu-usage") >= 58)
-        b.wait(lambda: progressValue(self, "#current-top-cpu-usage") <= 70)
+        b.wait(lambda: progressValue(self, "#current-top-cpu-usage") >= 38)
+        # the hoglet gets scheduled between core 1 and 2
+        b.wait(lambda: progressValue(self, "#current-top-cpu-usage") <= 80)
         # looks like "average: 45% max: 60%"
-        b.wait(lambda: int(b.text("#current-cpu-usage .pf-v5-c-progress__status").split()[-1].rstrip('%')) >= 58)
-        b.wait(lambda: int(b.text("#current-cpu-usage .pf-v5-c-progress__status").split()[-1].rstrip('%')) <= 70)
+        b.wait(lambda: int(b.text("#current-cpu-usage .pf-v5-c-progress__status").split()[-1].rstrip('%')) >= 38)
+        b.wait(lambda: int(b.text("#current-cpu-usage .pf-v5-c-progress__status").split()[-1].rstrip('%')) <= 80)
 
 
 @testlib.skipOstree("no PCP support")

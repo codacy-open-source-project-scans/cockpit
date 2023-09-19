@@ -585,10 +585,11 @@ class Browser:
                 if "exceptionDetails" in result:
                     trailer = "\n".join(self.cdp.get_js_log())
                     self.raise_cdp_exception("timeout\nwait_js_cond", cond, result["exceptionDetails"], trailer)
-                duration = time.time() - start
-                percent = int(duration / timeout * 100)
-                if percent >= 50:
-                    print(f"WARNING: Waiting for {cond} took {duration:.1f} seconds, which is {percent}% of the timeout.")
+                if timeout > 0:
+                    duration = time.time() - start
+                    percent = int(duration / timeout * 100)
+                    if percent >= 50:
+                        print(f"WARNING: Waiting for {cond} took {duration:.1f} seconds, which is {percent}% of the timeout.")
                 return
             except RuntimeError as e:
                 data = e.args[0]
@@ -798,27 +799,16 @@ class Browser:
 
     def logout(self):
         self.assert_no_oops()
-
         self.switch_to_top()
 
-        # changed in #16522
-        prev_shell = self.machine.system_before(258)
-
-        if prev_shell:
-            self.wait_visible("#navbar-dropdown")
-        else:
-            self.wait_visible("#toggle-menu")
+        self.wait_visible("#toggle-menu")
         if self.is_present("button#machine-reconnect") and self.is_visible("button#machine-reconnect"):
             # happens when shutting down cockpit or rebooting machine
             self.click("button#machine-reconnect")
         else:
             # happens when cockpit is still running
-            if prev_shell:
-                self.click("#navbar-dropdown")
-                self.click('#go-logout')
-            else:
-                self.open_session_menu()
-                self.click('#logout')
+            self.open_session_menu()
+            self.click('#logout')
         self.wait_visible('#login')
 
         self.machine.allow_restart_journal_messages()
@@ -994,7 +984,8 @@ class Browser:
                                         mock: Optional[Dict[str, str]] = None,
                                         sit_after_mock: bool = False,
                                         scroll_into_view: Optional[str] = None,
-                                        wait_animations: bool = True):
+                                        wait_animations: bool = True,
+                                        wait_delay: float = 0.5):
         """Compare the given element with its reference in the current layout"""
 
         if ignore is None:
@@ -1033,6 +1024,7 @@ class Browser:
         # wait half a second to and side-step all that complexity.
 
         if wait_animations:
+            time.sleep(wait_delay)
             self.wait_js_cond('ph_count_animations(%s) == 0' % jsquote(selector))
 
         rect = self.call_js_func('ph_element_clip', selector)
@@ -1153,6 +1145,7 @@ class Browser:
                       skip_layouts: Optional[List[str]] = None,
                       scroll_into_view: Optional[str] = None,
                       wait_animations: bool = True,
+                      wait_after_layout_change: bool = False,
                       wait_delay: float = 0.5):
         """Compare the given element with its reference in all layouts"""
 
@@ -1178,13 +1171,15 @@ class Browser:
             for layout in self.layouts:
                 if layout["name"] not in skip_layouts:
                     self.set_layout(layout["name"])
-                    time.sleep(wait_delay)
                     if "rtl" in self.current_layout["name"]:
                         self._set_direction("rtl")
+                    if wait_after_layout_change:
+                        time.sleep(wait_delay)
                     self.assert_pixels_in_current_layout(selector, key, ignore=ignore,
                                                          mock=mock, sit_after_mock=sit_after_mock,
                                                          scroll_into_view=scroll_into_view,
-                                                         wait_animations=wait_animations)
+                                                         wait_animations=wait_animations,
+                                                         wait_delay=wait_delay)
 
                     if "rtl" in self.current_layout["name"]:
                         self._set_direction("ltr")
@@ -1651,6 +1646,7 @@ class MachineCase(unittest.TestCase):
         # SELinux messages to ignore
         "(audit: )?type=1403 audit.*",
         "(audit: )?type=1404 audit.*",
+        "(audit: )?type=1405 audit.*",
 
         # apparmor loading
         "(audit: )?type=1400.*apparmor=\"STATUS\".*",
@@ -1732,7 +1728,7 @@ class MachineCase(unittest.TestCase):
                                     ".*couldn't create polkit session subject: No session for pid.*",
                                     "We are no longer a registered authentication agent.",
                                     ".*: failed to retrieve resource: terminated",
-                                    ".*: external channel failed: terminated",
+                                    ".*: external channel failed: (terminated|protocol-error)",
                                     'audit:.*denied.*comm="systemd-user-se".*nologin.*',
                                     ".*No session for cookie",
 
@@ -1794,6 +1790,7 @@ class MachineCase(unittest.TestCase):
             "Traceback .*most recent call last.*",
             "File .*",
             "async with self.watch_processing_lock:",
+            "self.send_message.*",
             "self.release.*",
             "self._wake_up_first.*",
             "fut.set_result.*",
@@ -2070,11 +2067,10 @@ class MachineCase(unittest.TestCase):
 
         if self.file_exists(path):
             backup = os.path.join(self.vm_tmpdir, path.replace('/', '_'))
-            self.machine.execute("mkdir -p %(vm_tmpdir)s; cp -a %(path)s %(backup)s" % {
-                "vm_tmpdir": self.vm_tmpdir, "path": path, "backup": backup})
-            self.addCleanup(self.machine.execute, "mv %(backup)s %(path)s" % {"path": path, "backup": backup})
+            self.machine.execute(f"mkdir -p {self.vm_tmpdir}; cp -a {path} {backup}")
+            self.addCleanup(self.machine.execute, f"mv {backup} {path}")
         else:
-            self.addCleanup(self.machine.execute, "rm -rf %s" % path)
+            self.addCleanup(self.machine.execute, f"rm -f {path}")
 
     def write_file(self, path: str, content: str, append: bool = False, owner: Optional[str] = None, perm: Optional[str] = None,
                    post_restore_action: Optional[str] = None):

@@ -271,17 +271,7 @@ export const NetworkInterfacePage = ({
     }
 
     function renderConnectionSettingsRows(con, settings) {
-        if (!isManaged) {
-            return ([
-                <DescriptionListGroup key="not-managed-device">
-                    <DescriptionListDescription>
-                        {_("This device cannot be managed here.")}
-                    </DescriptionListDescription>
-                </DescriptionListGroup>
-            ]);
-        }
-
-        if (!settings)
+        if (!isManaged || !settings)
             return [];
 
         let group_settings = null;
@@ -560,6 +550,19 @@ export const NetworkInterfacePage = ({
             return renderSettingsRow(_("VLAN"), rows, configure);
         }
 
+        function renderWireGuardSettingsRow() {
+            const rows = [];
+            const options = settings.wireguard;
+
+            if (!options) {
+                return null;
+            }
+
+            const configure = <NetworkAction type="wg" iface={iface} connectionSettings={settings} />;
+
+            return renderSettingsRow(_("WireGuard"), rows, configure);
+        }
+
         return [
             render_group(),
             renderAutoconnectRow(),
@@ -571,7 +574,8 @@ export const NetworkInterfacePage = ({
             renderBridgePortSettingsRow(),
             renderBondSettingsRow(),
             renderTeamSettingsRow(),
-            renderTeamPortSettingsRow()
+            renderTeamPortSettingsRow(),
+            renderWireGuardSettingsRow(),
         ];
     }
 
@@ -681,7 +685,8 @@ export const NetworkInterfacePage = ({
     const isDeletable = (iface && !dev) || (dev && (dev.DeviceType == 'bond' ||
                                                     dev.DeviceType == 'team' ||
                                                     dev.DeviceType == 'vlan' ||
-                                                    dev.DeviceType == 'bridge'));
+                                                    dev.DeviceType == 'bridge' ||
+                                                    dev.DeviceType == 'wireguard'));
 
     const settingsRows = renderConnectionSettingsRows(iface.MainConnection, connectionSettings)
             .map((component, idx) => <React.Fragment key={idx}>{component}</React.Fragment>);
@@ -723,7 +728,6 @@ export const NetworkInterfacePage = ({
                                 <span id="network-interface-hw">{renderDesc()}</span>
                                 <span id="network-interface-mac">{renderMac()}</span>
                             </CardTitle>
-
                         </CardHeader>
                         <CardBody>
                             <DescriptionList id="network-interface-settings" className="network-interface-settings pf-m-horizontal-on-sm">
@@ -732,6 +736,12 @@ export const NetworkInterfacePage = ({
                                 {settingsRows}
                             </DescriptionList>
                         </CardBody>
+                        { !isManaged
+                            ? <CardBody>
+                                {_("This device cannot be managed here.")}
+                            </CardBody>
+                            : null
+                        }
                     </Card>
                     {renderConnectionMembers(iface.MainConnection)}
                 </Gallery>

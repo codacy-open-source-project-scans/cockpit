@@ -257,7 +257,8 @@ class TestSystemInfo(packagelib.PackageCase):
         b.wait_not_present("#systime-manual-row .dialog-error")
         b.assert_pixels("#system_information_change_systime", "systime-manual-time")
         b.click("#system_information_change_systime .apply")
-        b.wait_not_present("#system_information_change_systime")
+        with b.wait_timeout(60):
+            b.wait_not_present("#system_information_change_systime")
 
         b.wait_text("#system_information_systime_button", "Jan 24, 2037, 8:03 AM")
 
@@ -270,7 +271,8 @@ class TestSystemInfo(packagelib.PackageCase):
         b.wait_visible("#system_information_change_systime")
         self.set_change_time_dialog_mode("Automatically using NTP")
         b.click("#system_information_change_systime .apply")
-        b.wait_not_present("#system_information_change_systime")
+        with b.wait_timeout(60):
+            b.wait_not_present("#system_information_change_systime")
 
         testlib.wait(ntp_enabled)
 
@@ -460,7 +462,9 @@ class TestSystemInfo(packagelib.PackageCase):
         # strips empty lines, but not leading spaces
         b.wait_text('#motd', "  Hello\n  World")
 
-        b.assert_pixels("#motd-box", "motd")
+        # For some reason, switching to RTL takes a long time
+        # here. Let's increase the delay.
+        b.assert_pixels("#motd-box", "motd", wait_delay=2.0)
 
         b.click('#motd-box button:not(#motd-box-edit)')
         b.wait_not_present('#motd-box')

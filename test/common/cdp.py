@@ -44,7 +44,6 @@ class Browser(abc.ABC):
         Reimplement this in subclasses, so it is easier to return None
         than to raise the proper exception (done at once in path()).
         """
-        pass
 
     def path(self, show_browser):
         """Return the path of the browser, if available.
@@ -204,7 +203,7 @@ class CDP:
         cmd = "client." + cmd
         res = self.command(cmd)
         if trace:
-            if "result" in res:
+            if res and "result" in res:
                 print("<- " + repr(res["result"]))
             else:
                 print("<- " + repr(res))
