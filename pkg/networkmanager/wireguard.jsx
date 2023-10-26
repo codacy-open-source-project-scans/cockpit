@@ -73,7 +73,7 @@ export function WireGuardDialog({ settings, connection, dev }) {
     const [listenPort, setListenPort] = useState(settings.wireguard.listen_port);
     const [addresses, setAddresses] = useState(addressesToString(settings.ipv4.addresses));
     const [dialogError, setDialogError] = useState("");
-    const [peers, setPeers] = useState(settings.wireguard.peers.map(peer => ({ ...peer, allowedIps: peer.allowedIps.join(",") })));
+    const [peers, setPeers] = useState(settings.wireguard.peers.map(peer => ({ ...peer, allowedIps: peer.allowedIps?.join(",") ?? '' })));
 
     // Additional check for `wg` after install_dialog for non-packagekit and el8 environments
     useEffect(() => {
@@ -117,7 +117,7 @@ export function WireGuardDialog({ settings, connection, dev }) {
                 const key = await cockpit.spawn(["wg", "pubkey"], { err: 'message' }).input(privateKey.trim());
                 setPublicKey(key.trim());
             } catch (e) {
-                console.error(e.message);
+                console.error("Failed to call wg pubkey:", e.message);
                 setPublicKey('');
             }
         }
@@ -150,7 +150,7 @@ export function WireGuardDialog({ settings, connection, dev }) {
             }
 
             peersArr = peers.map((peer, index) => {
-                if (peer.endpoint !== '') {
+                if (peer.endpoint?.trim()) {
                     const parts = peer.endpoint.split(":");
                     if (parts.length !== 2) {
                         throw cockpit.format(_("Peer #$0 has invalid endpoint. It must be specified as host:port, e.g. 1.2.3.4:51820 or example.com:51820"), index + 1);
@@ -160,7 +160,7 @@ export function WireGuardDialog({ settings, connection, dev }) {
                         throw cockpit.format(_("Peer #$0 has invalid endpoint port. Port must be a number."), index + 1);
                     }
                 }
-                return ({ ...peer, allowedIps: peer.allowedIps.split(',') });
+                return ({ ...peer, allowedIps: peer.allowedIps.trim().split(',') });
             });
         } catch (e) {
             setDialogError(typeof e === 'string' ? e : e.message);

@@ -20,7 +20,7 @@ import logging
 import os
 from typing import Callable, List, Optional, Sequence
 
-from .jsonutil import JsonObject
+from .jsonutil import JsonDocument, JsonObject
 from .packages import BridgeConfig
 from .protocol import CockpitProblem, CockpitProtocol, CockpitProtocolError
 from .router import Endpoint, Router, RoutingRule
@@ -61,7 +61,7 @@ class Peer(CockpitProtocol, SubprocessProtocol, Endpoint):
         user_env = dict(e.split('=', 1) for e in env)
         return SubprocessTransport(loop, self, argv, env=dict(os.environ, **user_env), **kwargs)
 
-    async def start(self, init_host: Optional[str] = None) -> JsonObject:
+    async def start(self, init_host: Optional[str] = None, **kwargs: JsonDocument) -> JsonObject:
         """Request that the Peer is started and connected to the router.
 
         Creates the transport, connects it to the protocol, and participates in
@@ -70,9 +70,9 @@ class Peer(CockpitProtocol, SubprocessProtocol, Endpoint):
 
         The Peer starts out in a frozen state (ie: attempts to send messages to
         it will initially be queued). If init_host is not None then an init
-        message is sent with the given 'host' field and the queue is thawed.
-        Otherwise, the caller is responsible for sending the init message and
-        thawing the peer.
+        message is sent with the given 'host' field, plus any extra kwargs, and
+        the queue is thawed. Otherwise, the caller is responsible for sending
+        the init message and thawing the peer.
 
         In any case, the return value is the init message from the peer.
         """
@@ -99,9 +99,11 @@ class Peer(CockpitProtocol, SubprocessProtocol, Endpoint):
             #   - other transport exception
             init_message = await self.init_future
 
-        except PeerExited:
-            # This is a fairly generic error.  If the connection process is
-            # still running, perhaps we'd get a better error message from it.
+        except (PeerExited, BrokenPipeError):
+            # These are fairly generic errors. PeerExited means that we observed the process exiting.
+            # BrokenPipeError means that we got EPIPE when attempting to write() to it. In both cases,
+            # the process is gone, but it's not clear why. If the connection process is still running,
+            # perhaps we'd get a better error message from it.
             await connect_task
             # Otherwise, re-raise
             raise
@@ -116,7 +118,7 @@ class Peer(CockpitProtocol, SubprocessProtocol, Endpoint):
         if init_host is not None:
             logger.debug('  sending init message back, host %s', init_host)
             # Send "init" back
-            self.write_control(command='init', version=1, host=init_host)
+            self.write_control(command='init', version=1, host=init_host, **kwargs)
 
             # Thaw the queued messages
             self.thaw_endpoint()
@@ -124,7 +126,7 @@ class Peer(CockpitProtocol, SubprocessProtocol, Endpoint):
         return init_message
 
     # Background initialization
-    def start_in_background(self, init_host: Optional[str] = None) -> None:
+    def start_in_background(self, init_host: Optional[str] = None, **kwargs: JsonDocument) -> None:
         def _start_task_done(task: asyncio.Task) -> None:
             assert task is start_task
 
@@ -133,7 +135,7 @@ class Peer(CockpitProtocol, SubprocessProtocol, Endpoint):
             except (OSError, PeerExited, CockpitProblem, asyncio.CancelledError):
                 pass  # Those are expected.  Others will throw.
 
-        start_task = asyncio.create_task(self.start(init_host))
+        start_task = asyncio.create_task(self.start(init_host, **kwargs))
         start_task.add_done_callback(_start_task_done)
 
     # Shutdown
@@ -141,10 +143,20 @@ class Peer(CockpitProtocol, SubprocessProtocol, Endpoint):
         self.done_callbacks.append(callback)
 
     # Handling of interesting events
+    def do_superuser_init_done(self) -> None:
+        pass
+
+    def do_authorize(self, message: JsonObject) -> None:
+        pass
+
     def transport_control_received(self, command: str, message: JsonObject) -> None:
         if command == 'init' and self.init_future is not None:
             logger.debug('Got init message with active init_future.  Setting result.')
             self.init_future.set_result(message)
+        elif command == 'authorize':
+            self.do_authorize(message)
+        elif command == 'superuser-init-done':
+            self.do_superuser_init_done()
         else:
             raise CockpitProtocolError(f'Received unexpected control message {command}')
 

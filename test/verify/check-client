@@ -20,7 +20,7 @@
 import testlib
 
 
-@testlib.skipImage("needs pybridge", "debian-stable", "ubuntu-2204", "rhel-8*", "centos-8*")
+@testlib.skipImage("needs pybridge", "rhel-8*", "centos-8*")
 # enable this once our cockpit/ws container can beiboot
 @testlib.skipOstree("client setup does not work with ws container")
 class TestClient(testlib.MachineCase):
@@ -42,14 +42,13 @@ class TestClient(testlib.MachineCase):
             self.m_target.execute("rpm --erase --verbose cockpit-pcp pcp")
 
         # replicate the plumbing bits of src/client/cockpit-client to set up cockpit-beiboot
-        self.m_client.write("/etc/cockpit/cockpit.conf", f"""
+        self.m_client.write("/etc/cockpit/cockpit.conf", """
 [WebService]
 X-For-CockpitClient = true
 LoginTo = true
 
 [Ssh-Login]
-ReportStderr = true
-Command = {self.libexecdir}/cockpit-beiboot
+Command = /usr/bin/env python3 -m cockpit.beiboot
 """)
 
     def check_login(self, expected_user):
@@ -67,9 +66,7 @@ Command = {self.libexecdir}/cockpit-beiboot
     def logout(self, check_last_host=None):
         b = self.browser
 
-        b.assert_no_oops()
-        b.open_session_menu()
-        b.click('#logout')
+        b.logout()
         # FIXME: This is broken, nothing appears
         # b.wait_text("#brand", "Connect to:")
         if check_last_host:
@@ -83,17 +80,16 @@ Command = {self.libexecdir}/cockpit-beiboot
                               timeout=30)
 
     def testBeibootNoBridge(self):
-        self.m_client.spawn(f"runuser -u admin -- {self.libexecdir}/cockpit-ws --no-tls", "ws.log")
         # set up target machine: no cockpit
         self.m_target.execute("rm /usr/bin/cockpit-bridge; rm -r /usr/share/cockpit")
-
         self.checkLoginScenarios(local_bridge=False)
 
     def testBeibootWithBridge(self):
-        self.m_client.spawn(f"runuser -u admin -- {self.libexecdir}/cockpit-ws --no-tls", "ws.log")
         self.checkLoginScenarios(local_bridge=True)
 
     def checkLoginScenarios(self, *, local_bridge=True):
+        self.m_client.spawn(f"runuser -u admin -- {self.libexecdir}/cockpit-ws --no-tls", "ws.log")
+
         b = self.browser
         b.open("/")
 
@@ -185,6 +181,30 @@ Command = {self.libexecdir}/cockpit-beiboot
         self.logout()
         b.wait_in_text("#recent-hosts-list", "user@10.111.113.2")
 
+        # explicit port
+        b.set_val("#server-field", "10.111.113.2:22")
+        b.click("#login-button")
+        b.wait_text("#conversation-prompt", "admin@10.111.113.2's password: ")
+        b.set_val("#conversation-input", "foobar")
+        b.click("#login-button")
+        self.check_login("admin@target")
+        self.logout()
+        b.wait_in_text("#recent-hosts-list", "10.111.113.2:22")
+
+        # different user name + explicit port
+        b.set_val("#server-field", "user@10.111.113.2:22")
+        b.click("#login-button")
+        b.wait_text("#conversation-prompt", "user@10.111.113.2's password: ")
+        b.set_val("#conversation-input", "barfoo")
+        b.click("#login-button")
+        self.check_login("user@target")
+        self.logout()
+        b.wait_in_text("#recent-hosts-list", "user@10.111.113.2:22")
+
+        # remove that recent hosts entry, this also avoids ambiguous selectors further down
+        b.click("#recent-hosts-list .host-line:contains('user@10.111.113.2:22') button.host-remove")
+        b.wait_not_in_text("#recent-hosts-list", "user@10.111.113.2:22")
+
         # unreachable host
         b.set_val("#server-field", "unknownhost")
         b.click("#login-button")
@@ -194,6 +214,11 @@ Command = {self.libexecdir}/cockpit-beiboot
         # does not appear in recent hosts
         b.wait_in_text("#recent-hosts-list", "10.111.113.2")
         self.assertNotIn("unknownhost", b.text("#recent-hosts-list"))
+
+        # wrong port
+        b.set_val("#server-field", "10.111.113.2:222")
+        b.click("#login-button")
+        b.wait_in_text("#login-fatal-message", "connect to host 10.111.113.2 port 222: No route to host")
 
         # unencrypted SSH key login
         self.m_client.execute("runuser -u admin -- ssh-keygen -t rsa -N '' -f ~admin/.ssh/id_rsa")

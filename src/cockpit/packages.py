@@ -92,6 +92,43 @@ def sortify_version(version: str) -> str:
     return '.'.join(part.zfill(8) for part in version.split('.'))
 
 
+@functools.lru_cache()
+def get_libexecdir() -> str:
+    """Detect libexecdir on current machine
+
+    This only works for systems which have cockpit-ws installed.
+    """
+    for candidate in ['/usr/local/libexec', '/usr/libexec', '/usr/local/lib/cockpit', '/usr/lib/cockpit']:
+        if os.path.exists(os.path.join(candidate, 'cockpit-askpass')):
+            return candidate
+    else:
+        logger.warning('Could not detect libexecdir')
+        # give readable error messages
+        return '/nonexistent/libexec'
+
+
+# HACK: Type narrowing over Union types is not supported in the general case,
+# but this works for the case we care about: knowing that when we pass in an
+# JsonObject, we'll get an JsonObject back.
+J = TypeVar('J', JsonObject, JsonDocument)
+
+
+def patch_libexecdir(obj: J) -> J:
+    if isinstance(obj, str):
+        if '${libexecdir}/cockpit-askpass' in obj:
+            # extra-special case: we handle this internally
+            abs_askpass = shutil.which('cockpit-askpass')
+            if abs_askpass is not None:
+                return obj.replace('${libexecdir}/cockpit-askpass', abs_askpass)
+        return obj.replace('${libexecdir}', get_libexecdir())
+    elif isinstance(obj, dict):
+        return {key: patch_libexecdir(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [patch_libexecdir(item) for item in obj]
+    else:
+        return obj
+
+
 # A document is a binary stream with a Content-Type, optional Content-Encoding,
 # and optional Content-Security-Policy
 class Document(NamedTuple):
@@ -157,7 +194,8 @@ class Manifest(JsonObject):
 
 
 class Package:
-    PO_JS_RE: ClassVar[Pattern] = re.compile(r'po\.([^.]+)\.js(\.gz)?')
+    # For po{,.manifest}.js files, the interesting part is the locale name
+    PO_JS_RE: ClassVar[Pattern] = re.compile(r'(po|po\.manifest)\.([^.]+)\.js(\.gz)?')
 
     # immutable after __init__
     manifest: Manifest
@@ -166,7 +204,7 @@ class Package:
     priority: int
 
     # computed later
-    translations: Optional[Dict[str, str]] = None
+    translations: Optional[Dict[str, Dict[str, str]]] = None
     files: Optional[Dict[str, str]] = None
 
     def __init__(self, manifest: Manifest):
@@ -186,7 +224,7 @@ class Package:
             return
 
         self.files = {}
-        self.translations = {}
+        self.translations = {'po.js': {}, 'po.manifest.js': {}}
 
         for file in self.path.rglob('*'):
             name = str(file.relative_to(self.path))
@@ -195,13 +233,19 @@ class Package:
 
             po_match = Package.PO_JS_RE.fullmatch(name)
             if po_match:
-                locale = po_match.group(1)
+                basename = po_match.group(1)
+                locale = po_match.group(2)
                 # Accept-Language is case-insensitive and uses '-' to separate variants
                 lower_locale = locale.lower().replace('_', '-')
-                self.translations[lower_locale] = name
+
+                self.translations[f'{basename}.js'][lower_locale] = name
             else:
                 basename = name[:-3] if name.endswith('.gz') else name
                 self.files[basename] = name
+
+        # support old cockpit-po-plugin which didn't write po.manifest.??.js
+        if not self.translations['po.manifest.js']:
+            self.translations['po.manifest.js'] = self.translations['po.js']
 
     def get_content_security_policy(self) -> str:
         policy = {
@@ -236,21 +280,21 @@ class Package:
 
         return Document(path.open('rb'), content_type, content_encoding, content_security_policy)
 
-    def load_translation(self, locales: List[str]) -> Document:
+    def load_translation(self, path: str, locales: List[str]) -> Document:
         self.ensure_scanned()
         assert self.translations is not None
 
         # First check the locales that the user sent
         for locale in locales:
             with contextlib.suppress(KeyError):
-                return self.load_file(self.translations[locale])
+                return self.load_file(self.translations[path][locale])
 
         # Next, check the language-only versions of variant-specified locales
         for locale in locales:
             language, _, region = locale.partition('-')
             if region:
                 with contextlib.suppress(KeyError):
-                    return self.load_file(self.translations[language])
+                    return self.load_file(self.translations[path][language])
 
         # We prefer to return an empty document than 404 in order to avoid
         # errors in the console when a translation can't be found
@@ -261,9 +305,9 @@ class Package:
         assert self.files is not None
         assert self.translations is not None
 
-        if path == 'po.js':
+        if path in self.translations:
             locales = parse_accept_language(headers)
-            return self.load_translation(locales)
+            return self.load_translation(path, locales)
         else:
             return self.load_file(self.files[path])
 
@@ -273,42 +317,6 @@ class PackagesLoader:
         'path-exists': os.path.exists,
         'path-not-exists': lambda p: not os.path.exists(p),
     }
-
-    @staticmethod
-    @functools.lru_cache()
-    def get_libexecdir() -> str:
-        """Detect libexecdir on current machine
-
-        This only works for systems which have cockpit-ws installed.
-        """
-        for candidate in ['/usr/local/libexec', '/usr/libexec', '/usr/local/lib/cockpit', '/usr/lib/cockpit']:
-            if os.path.exists(os.path.join(candidate, 'cockpit-askpass')):
-                return candidate
-        else:
-            logger.warning('Could not detect libexecdir')
-            # give readable error messages
-            return '/nonexistent/libexec'
-
-    # HACK: Type narrowing over Union types is not supported in the general case,
-    # but this works for the case we care about: knowing that when we pass in an
-    # JsonObject, we'll get an JsonObject back.
-    J = TypeVar('J', JsonObject, JsonDocument)
-
-    @classmethod
-    def patch_libexecdir(cls, obj: J) -> J:
-        if isinstance(obj, str):
-            if '${libexecdir}/cockpit-askpass' in obj:
-                # extra-special case: we handle this internally
-                abs_askpass = shutil.which('cockpit-askpass')
-                if abs_askpass is not None:
-                    return obj.replace('${libexecdir}/cockpit-askpass', abs_askpass)
-            return obj.replace('${libexecdir}', cls.get_libexecdir())
-        elif isinstance(obj, dict):
-            return {key: cls.patch_libexecdir(value) for key, value in obj.items()}
-        elif isinstance(obj, list):
-            return [cls.patch_libexecdir(item) for item in obj]
-        else:
-            return obj
 
     @classmethod
     def get_xdg_data_dirs(cls) -> Iterable[str]:
@@ -361,7 +369,7 @@ class PackagesLoader:
 
             manifest = cls.merge_patch(manifest, override)
 
-        return cls.patch_libexecdir(manifest)
+        return patch_libexecdir(manifest)
 
     @classmethod
     def load_manifests(cls) -> Iterable[Manifest]:
@@ -496,13 +504,15 @@ class Packages(bus.Object, interface='cockpit.Packages'):
         for name, package in self.packages.items():
             if name in ['static', 'base1']:
                 continue
+
             # find_translation will always find at least 'en'
-            translation = package.load_translation(locales)
+            translation = package.load_translation('po.manifest.js', locales)
             with translation.data:
                 if translation.content_encoding == 'gzip':
                     data = gzip.decompress(translation.data.read())
                 else:
                     data = translation.data.read()
+
             chunks.append(data)
 
         chunks.append(b"""

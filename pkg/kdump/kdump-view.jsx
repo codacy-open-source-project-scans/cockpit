@@ -45,6 +45,7 @@ import { fmt_to_fragments } from 'utils.jsx';
 import { show_modal_dialog } from "cockpit-components-dialog.jsx";
 import { FormHelper } from "cockpit-components-form-helper";
 import { ModalError } from 'cockpit-components-inline-notification.jsx';
+import { PrivilegedButton } from "cockpit-components-privileged.jsx";
 
 const _ = cockpit.gettext;
 
@@ -160,7 +161,7 @@ const KdumpSettingsModal = ({ settings, initialTarget, handleSave }) => {
                }>
             {error && <ModalError isExpandable
                                   dialogError={error.message || error}
-                                  dialogErrorDetail={error?.details} />}
+                                  dialogErrorDetail={error.details} />}
             <Form id="kdump-settings-form" isHorizontal>
                 <FormGroup fieldId="kdump-settings-location" label={_("Location")}>
                     <FormSelect key="location" onChange={(_, val) => changeStorageLocation(val)}
@@ -441,9 +442,11 @@ export class KdumpPage extends React.Component {
         let testButton;
         if (serviceRunning) {
             testButton = (
-                <Button variant="secondary" onClick={this.handleTestSettingsClick}>
-                    {_("Test configuration")}
-                </Button>
+                <PrivilegedButton variant="secondary"
+                                  excuse={ _("The user $0 is not permitted to test crash the kernel") }
+                                  onClick={this.handleTestSettingsClick}>
+                    { _("Test configuration") }
+                </PrivilegedButton>
             );
         } else {
             const tooltip = _("Test is only available while the kdump service is running.");

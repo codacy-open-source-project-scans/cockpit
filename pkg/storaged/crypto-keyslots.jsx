@@ -23,7 +23,7 @@ import React from "react";
 import { Card, CardBody, CardHeader, CardTitle } from '@patternfly/react-core/dist/esm/components/Card/index.js';
 import { Checkbox } from "@patternfly/react-core/dist/esm/components/Checkbox/index.js";
 import { ClipboardCopy } from "@patternfly/react-core/dist/esm/components/ClipboardCopy/index.js";
-import { Form, FormGroup } from "@patternfly/react-core/dist/esm/components/Form/index.js";
+import { FormGroup } from "@patternfly/react-core/dist/esm/components/Form/index.js";
 import { DataList, DataListCell, DataListItem, DataListItemCells, DataListItemRow } from "@patternfly/react-core/dist/esm/components/DataList/index.js";
 import { Text, TextContent, TextList, TextListItem, TextVariants } from "@patternfly/react-core/dist/esm/components/Text/index.js";
 import { TextInput as TextInputPF } from "@patternfly/react-core/dist/esm/components/TextInput/index.js";
@@ -39,11 +39,9 @@ import {
     dialog_open,
     SelectOneRadio, TextInput, PassInput, Skip
 } from "./dialog.jsx";
-import { decode_filename, encode_filename, get_block_mntopts, block_name, for_each_async, get_children } from "./utils.js";
+import { decode_filename, encode_filename, get_block_mntopts, block_name, for_each_async, get_children, parse_options, unparse_options, edit_crypto_config } from "./utils.js";
 import { fmt_to_fragments } from "utils.jsx";
 import { StorageButton } from "./storage-controls.jsx";
-import { parse_options, unparse_options } from "./format-dialog.jsx";
-import { edit_config } from "./crypto-tab.jsx";
 
 import clevis_luks_passphrase_sh from "./clevis-luks-passphrase.sh";
 
@@ -230,7 +228,7 @@ export function get_existing_passphrase(block, just_type) {
 
 export function request_passphrase_on_error_handler(dlg, vals, recovered_passphrase, block) {
     return function (error) {
-        if (vals.passphrase === undefined) {
+        if (vals.passphrase === undefined && block) {
             return (passphrase_test(block, recovered_passphrase)
                     .then(good => {
                         if (!good)
@@ -384,7 +382,7 @@ function ensure_crypto_option(steps, progress, client, block, option) {
 
     const new_crypto_options = crypto_options.concat([option]);
     progress(cockpit.format(_("Adding \"$0\" to encryption options"), option), null);
-    return edit_config(block, (config, commit) => {
+    return edit_crypto_config(block, (config, commit) => {
         config.options = { t: 'ay', v: encode_filename(unparse_options(new_crypto_options)) };
         return commit();
     });
@@ -624,15 +622,13 @@ export const TangKeyVerification = ({ url, adv }) => {
             <Text component={TextVariants.p}>{_("Check the key hash with the Tang server.")}</Text>
 
             <Text component={TextVariants.h3}>{_("How to check")}</Text>
-            <Text component={TextVariants.p}>
-                {_("In a terminal, run: ")}
-                <ClipboardCopy hoverTip={_("Copy to clipboard")}
-                               clickTip={_("Successfully copied to clipboard!")}
-                               variant="inline-compact"
-                               isCode>
-                    {cmd}
-                </ClipboardCopy>
-            </Text>
+            <span>{_("In a terminal, run: ")}</span>
+            <ClipboardCopy hoverTip={_("Copy to clipboard")}
+                            clickTip={_("Successfully copied to clipboard!")}
+                            variant="inline-compact"
+                            isCode>
+                {cmd}
+            </ClipboardCopy>
             <Text component={TextVariants.p}>
                 {_("Check that the SHA-256 or SHA-1 hash from the command matches this dialog.")}
             </Text>
@@ -694,21 +690,19 @@ const RemovePassphraseField = (tag, key, dev) => {
             return (
                 <Stack hasGutter>
                     <p>{ fmt_to_fragments(_("Passphrase removal may prevent unlocking $0."), <b>{dev}</b>) }</p>
-                    <Form>
-                        <Checkbox id="force-remove-passphrase"
-                                  isChecked={val !== false}
-                                  label={_("Confirm removal with an alternate passphrase")}
-                                  onChange={(_event, checked) => change(checked ? "" : false)}
-                                  body={val === false
-                                      ? <p className="slot-warning">
-                                          {_("Removing a passphrase without confirmation of another passphrase may prevent unlocking or key management, if other passphrases are forgotten or lost.")}
-                                      </p>
-                                      : <FormGroup label={_("Passphrase from any other key slot")} fieldId="remove-passphrase">
-                                          <TextInputPF id="remove-passphrase" type="password" value={val} onChange={(_event, value) => change(value)} />
-                                      </FormGroup>
-                                  }
-                        />
-                    </Form>
+                    <Checkbox id="force-remove-passphrase"
+                                isChecked={val !== false}
+                                label={_("Confirm removal with an alternate passphrase")}
+                                onChange={(_event, checked) => change(checked ? "" : false)}
+                                body={val === false
+                                    ? <p className="slot-warning">
+                                        {_("Removing a passphrase without confirmation of another passphrase may prevent unlocking or key management, if other passphrases are forgotten or lost.")}
+                                    </p>
+                                    : <FormGroup label={_("Passphrase from any other key slot")} fieldId="remove-passphrase">
+                                        <TextInputPF id="remove-passphrase" type="password" value={val} onChange={(_event, value) => change(value)} />
+                                    </FormGroup>
+                                }
+                    />
                 </Stack>
             );
         }

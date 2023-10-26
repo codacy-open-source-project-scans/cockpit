@@ -70,7 +70,6 @@ __all__ = (
     'onlyImage',
     'skipImage',
     'skipDistroPackage',
-    'skipMobile',
     'skipOstree',
     'skipBrowser',
     'todo',
@@ -491,11 +490,13 @@ class Browser:
             self.cdp.invoke("Input.dispatchKeyEvent", **args)
 
     def _key_press_firefox(self, keys: str, modifiers: int = 0, use_ord: bool = False):
-        # https://github.com/GoogleChrome/puppeteer/blob/master/lib/USKeyboardLayout.js
+        # https://python-reference.readthedocs.io/en/latest/docs/str/ASCII.html
+        # Both line feed and carriage return are normalized to Enter (https://html.spec.whatwg.org/multipage/form-elements.html)
         keyMap = {
             8: "Backspace",   # Backspace key
             9: "Tab",         # Tab key
-            13: "Enter",      # Enter key
+            10: "Enter",      # Enter key (normalized from line feed)
+            13: "Enter",      # Enter key (normalized from carriage return)
             27: "Escape",     # Escape key
             37: "ArrowLeft",  # Arrow key left
             40: "ArrowDown",  # Arrow key down
@@ -514,7 +515,7 @@ class Browser:
 
     def select_from_dropdown(self, selector: str, value):
         self.wait_visible(selector + ':not([disabled]):not([aria-disabled=true])')
-        text_selector = "{0} option[value='{1}']".format(selector, value)
+        text_selector = f"{selector} option[value='{value}']"
         self._wait_present(text_selector)
         self.set_val(selector, value)
         self.wait_val(selector, value)
@@ -808,7 +809,12 @@ class Browser:
         else:
             # happens when cockpit is still running
             self.open_session_menu()
-            self.click('#logout')
+            try:
+                self.click('#logout')
+            except RuntimeError as e:
+                # logging out does destroy the current frame context, it races with the CDP driver finishing the command
+                if "Execution context was destroyed" not in str(e):
+                    raise
         self.wait_visible('#login')
 
         self.machine.allow_restart_journal_messages()
@@ -915,7 +921,7 @@ class Browser:
         if self.cdp and self.cdp.valid:
             self.cdp.command("clearExceptions()")
 
-            filename = "{0}-{1}.png".format(label or self.label, title)
+            filename = f"{label or self.label}-{title}.png"
             if self.body_clip:
                 ret = self.cdp.invoke("Page.captureScreenshot", clip=self.body_clip, no_trace=True)
             else:
@@ -928,7 +934,7 @@ class Browser:
             else:
                 print("Screenshot not available")
 
-            filename = "{0}-{1}.html".format(label or self.label, title)
+            filename = f"{label or self.label}-{title}.html"
             html = self.cdp.invoke("Runtime.evaluate", expression="document.documentElement.outerHTML",
                                    no_trace=True)["result"]["value"]
             with open(filename, 'wb') as f:
@@ -1209,7 +1215,7 @@ class Browser:
 
         logs = list(self.get_js_log())
         if logs:
-            filename = "{0}-{1}.js.log".format(label or self.label, title)
+            filename = f"{label or self.label}-{title}.js.log"
             with open(filename, 'wb') as f:
                 f.write('\n'.join(logs).encode('UTF-8'))
             attach(filename, move=True)
@@ -1257,7 +1263,7 @@ class MachineCase(unittest.TestCase):
             return cls.global_machine
         cls.global_machine = cls.new_machine(cls, restrict=True, cleanup=False)
         if opts.trace:
-            print("Starting global machine {0}".format(cls.global_machine.label))
+            print(f"Starting global machine {cls.global_machine.label}")
         cls.global_machine.start()
         return cls.global_machine
 
@@ -1270,8 +1276,9 @@ class MachineCase(unittest.TestCase):
     def label(self):
         return self.__class__.__name__ + '-' + self._testMethodName
 
-    def new_machine(self, image=None, forward=None, restrict=True, cleanup=True, **kwargs):
-        machine_class = self.machine_class
+    def new_machine(self, image=None, forward=None, restrict=True, cleanup=True, inherit_machine_class=True, **kwargs):
+        machine_class = inherit_machine_class and self.machine_class or testvm.VirtMachine
+
         if opts.address:
             if forward:
                 raise unittest.SkipTest("Cannot run this test when specific machine address is specified")
@@ -1283,8 +1290,6 @@ class MachineCase(unittest.TestCase):
                 image = os.path.join(TEST_DIR, "images", self.image)
                 if not os.path.exists(image):
                     raise FileNotFoundError("Can't run tests without a prepared image; use test/image-prepare")
-            if not machine_class:
-                machine_class = testvm.VirtMachine
             if not self.network:
                 network = testvm.VirtNetwork(image=image)
                 if cleanup:
@@ -1427,7 +1432,7 @@ class MachineCase(unittest.TestCase):
                     first_machine = False
                     self.machine = machine
                 if opts.trace:
-                    print("Starting {0} {1}".format(key, machine.label))
+                    print(f"Starting {key} {machine.label}")
                 machine.start()
 
         self.danger_btn_class = '.pf-m-danger'
@@ -1698,10 +1703,22 @@ class MachineCase(unittest.TestCase):
     default_allowed_console_errors = [
         # HACK: These should be fixed, but debugging these is not trivial, and the impact is very low
         "Warning: .* setState.*on an unmounted component",
-        "Warning: Can't perform a React state update on an unmounted component."
+        "Warning: Can't perform a React state update on an unmounted component",
+        "Warning: Cannot update a component.*while rendering a different component",
+        "Warning: A component is changing an uncontrolled input to be controlled",
+        "Warning: A component is changing a controlled input to be uncontrolled",
+        "Warning: Can't call.*on a component that is not yet mounted. This is a no-op",
+        "Warning: Cannot update during an existing state transition",
+        r"Warning: You are calling ReactDOMClient.createRoot\(\) on a container that has already been passed to createRoot",
+
+        # FIXME: PatternFly complains about these, but https://www.a11y-collective.com/blog/the-first-rule-for-using-aria/
+        # and https://www.accessibility-developer-guide.com/knowledge/aria/bad-practices/
+        "aria-label",
     ]
 
-    default_allowed_console_errors += os.environ.get("TEST_ALLOW_BROWSER_ERRORS", "").split(",")
+    env_allow = os.environ.get("TEST_ALLOW_BROWSER_ERRORS")
+    if env_allow:
+        default_allowed_console_errors += env_allow.split(",")
 
     def allow_journal_messages(self, *patterns: str):
         """Don't fail if the journal contains a entry completely matching the given regexp"""
@@ -1915,7 +1932,7 @@ class MachineCase(unittest.TestCase):
         # write the report
         if suffix:
             suffix = "-" + suffix
-        filename = "{0}{1}-axe.json.gz".format(label or self.label(), suffix)
+        filename = f"{label or self.label()}{suffix}-axe.json.gz"
         with gzip.open(filename, "wb") as f:
             f.write(json.dumps(report).encode('UTF-8'))
         print("Wrote accessibility report to " + filename)
@@ -1997,27 +2014,29 @@ class MachineCase(unittest.TestCase):
         The optional apply_change_action will be run both after sedding and after restoring the file.
         """
         m = self.machine
-        m.execute("sed -i.cockpittest '{0}' {1}".format(expr, path))
+        m.execute(f"sed -i.cockpittest '{expr}' {path}")
         if apply_change_action:
             m.execute(apply_change_action)
 
         if self.is_nondestructive():
             if apply_change_action:
                 self.addCleanup(m.execute, apply_change_action)
-            self.addCleanup(m.execute, "mv {0}.cockpittest {0}".format(path))
+            self.addCleanup(m.execute, f"mv {path}.cockpittest {path}")
 
     def file_exists(self, path: str) -> bool:
         """Check if file exists on test machine"""
 
         return self.machine.execute(f"if test -e {path}; then echo yes; fi").strip() != ""
 
-    def restore_dir(self, path: str, post_restore_action: Optional[str] = None, reboot_safe: bool = False):
+    def restore_dir(self, path: str, post_restore_action: Optional[str] = None, reboot_safe: bool = False,
+                    restart_unit: Optional[str] = None):
         """Backup/restore a directory for a nondestructive test
 
         This takes care to not ever touch the original content on disk, but uses transient overlays.
         As this uses a bind mount, it does not work for files that get changed atomically (with mv);
         use restore_file() for these.
 
+        `restart_unit` will be stopped before restoring path, and restarted afterwards if it was running.
         The optional post_restore_action will run after restoring the original content.
 
         If the directory needs to survive reboot, `reboot_safe=True` needs to be specified; then this
@@ -2026,23 +2045,30 @@ class MachineCase(unittest.TestCase):
         if not self.is_nondestructive() and not self.machine.ostree_image:
             return  # skip for efficiency reasons
 
+        exe = self.machine.execute
+
         if not self.file_exists(path):
-            self.addCleanup(self.machine.execute, "rm -rf {0}".format(path))
+            self.addCleanup(exe, f"rm -rf '{path}'")
             return
 
         backup = os.path.join(self.vm_tmpdir, path.replace('/', '_'))
-        self.machine.execute("mkdir -p %(vm_tmpdir)s; cp -a %(path)s/ %(backup)s/" % {
-            "vm_tmpdir": self.vm_tmpdir, "path": path, "backup": backup})
+        exe(f"mkdir -p {self.vm_tmpdir}; cp -a {path}/ {backup}/")
 
         if not reboot_safe:
-            self.machine.execute("mount -o bind %(backup)s %(path)s" % {
-                "path": path, "backup": backup})
+            exe(f"mount -o bind {backup} {path}")
+
+        if restart_unit:
+            restart_stamp = f"/run/cockpit_restart_{restart_unit}"
+            self.addCleanup(
+                exe,
+                f"if [ -e {restart_stamp} ]; then systemctl start {restart_unit}; rm {restart_stamp}; fi"
+            )
 
         if post_restore_action:
-            self.addCleanup(self.machine.execute, post_restore_action)
+            self.addCleanup(exe, post_restore_action)
 
         if reboot_safe:
-            self.addCleanup(self.machine.execute, f"rm -rf {path}; mv {backup} {path}")
+            self.addCleanup(exe, f"rm -rf {path}; mv {backup} {path}")
         else:
             # HACK: a lot of tests call this on /home/...; that restoration happens before killing all user
             # processes in nonDestructiveSetup(), so we have to do it lazily
@@ -2050,7 +2076,11 @@ class MachineCase(unittest.TestCase):
                 cmd = f"umount -lf {path}"
             else:
                 cmd = f"umount {path} || {{ fuser -uvk {path} {path}/* >&2 || true; sleep 1; umount {path}; }}"
-            self.addCleanup(self.machine.execute, cmd)
+            self.addCleanup(exe, cmd)
+
+        if restart_unit:
+            self.addCleanup(exe, f"if systemctl --quiet is-active {restart_unit}; then touch {restart_stamp}; fi; "
+                            f"systemctl stop {restart_unit}")
 
     def restore_file(self, path: str, post_restore_action: Optional[str] = None):
         """Backup/restore a file for a nondestructive test
@@ -2167,7 +2197,7 @@ def skipBrowser(reason: str, *browsers: str):
     """
     browser = os.environ.get("TEST_BROWSER", "chromium")
     if browser in browsers:
-        return unittest.skip("{0}: {1}".format(browser, reason))
+        return unittest.skip(f"{browser}: {reason}")
     return lambda testEntity: testEntity
 
 
@@ -2180,7 +2210,7 @@ def skipImage(reason: str, *images: str):
     Example: @skipImage("no btrfs support on RHEL", "rhel-*")
     """
     if any(fnmatch.fnmatch(testvm.DEFAULT_IMAGE, img) for img in images):
-        return unittest.skip("{0}: {1}".format(testvm.DEFAULT_IMAGE, reason))
+        return unittest.skip(f"{testvm.DEFAULT_IMAGE}: {reason}")
     return lambda testEntity: testEntity
 
 
@@ -2191,7 +2221,7 @@ def onlyImage(reason: str, *images: str):
     support Unix shell style patterns via fnmatch.fnmatch.
     """
     if not any(fnmatch.fnmatch(testvm.DEFAULT_IMAGE, arg) for arg in images):
-        return unittest.skip("{0}: {1}".format(testvm.DEFAULT_IMAGE, reason))
+        return unittest.skip(f"{testvm.DEFAULT_IMAGE}: {reason}")
     return lambda testEntity: testEntity
 
 
@@ -2201,17 +2231,7 @@ def skipOstree(reason: str):
     Skip test for *reason* on OSTree images defined in OSTREE_IMAGES in bots/lib/constants.py.
     """
     if testvm.DEFAULT_IMAGE in OSTREE_IMAGES:
-        return unittest.skip("{0}: {1}".format(testvm.DEFAULT_IMAGE, reason))
-    return lambda testEntity: testEntity
-
-
-def skipMobile():
-    """Decorator for skipping a test on mobile
-
-    Skip test on when TEST_MOBILE is set.
-    """
-    if bool(os.environ.get("TEST_MOBILE", "")):
-        return unittest.skip("mobile: This test breaks on small screen sizes")
+        return unittest.skip(f"{testvm.DEFAULT_IMAGE}: {reason}")
     return lambda testEntity: testEntity
 
 
@@ -2246,7 +2266,7 @@ def no_retry_when_changed(testEntity):
     return testEntity
 
 
-def todo(reason=''):
+def todo(reason: str = ''):
     """Tests decorated with @todo are expected to fail.
 
     An optional reason can be given, and will appear in the TAP output if run
@@ -2258,7 +2278,7 @@ def todo(reason=''):
     return wrapper
 
 
-def todoPybridge(reason=None):
+def todoPybridge(reason: Optional[str] = None):
     if not reason:
         reason = 'still fails with python bridge'
 
@@ -2283,13 +2303,13 @@ def todoPybridge(reason=None):
     return wrap
 
 
-def todoPybridgeRHEL8(reason=None):
+def todoPybridgeRHEL8(reason: Optional[str] = None):
     if testvm.DEFAULT_IMAGE.startswith('rhel-8') or testvm.DEFAULT_IMAGE.startswith('centos-8'):
         return todoPybridge(reason or 'known fail on el8 with python bridge')
     return lambda testEntity: testEntity
 
 
-def timeout(seconds: str):
+def timeout(seconds: int):
     """Change default test timeout of 600s, for long running tests
 
     Can be applied to an individual test method or the entire class. This only
@@ -2316,22 +2336,22 @@ class TapRunner:
             return result
         except Exception:
             result.addError(test, sys.exc_info())
-            sys.stderr.write("Unexpected exception while running {0}\n".format(test))
+            sys.stderr.write(f"Unexpected exception while running {test}\n")
             sys.stderr.write(traceback.format_exc())
             return result
         else:
             result.printErrors()
 
         if result.skipped:
-            print("# Result {0} skipped: {1}".format(test, result.skipped[0][1]))
+            print(f"# Result {test} skipped: {result.skipped[0][1]}")
         elif result.wasSuccessful():
-            print("# Result {0} succeeded".format(test))
+            print(f"# Result {test} succeeded")
         else:
             for failure in result.failures:
                 print(failure[1])
             for error in result.errors:
                 print(error[1])
-            print("# Result {0} failed".format(test))
+            print(f"# Result {test} failed")
         return result
 
     def run(self, testable):
@@ -2362,13 +2382,13 @@ class TapRunner:
         # Report on the results
         duration = int(time.time() - start)
         hostname = socket.gethostname().split(".")[0]
-        details = "[{0}s on {1}]".format(duration, hostname)
+        details = f"[{duration}s on {hostname}]"
 
         MachineCase.kill_global_machine()
 
         # Return 77 if all tests were skipped
         if len(skips) == test_count:
-            sys.stdout.write("# SKIP {0}\n".format(", ".join(["{0} {1}".format(str(s[0]), s[1]) for s in skips])))
+            sys.stdout.write("# SKIP {0}\n".format(", ".join([f"{s[0]!s} {s[1]}" for s in skips])))
             return 77
         if failures:
             sys.stdout.write("# {0} TEST{1} FAILED {2}\n".format(failures, "S" if failures > 1 else "", details))
@@ -2384,7 +2404,7 @@ def print_tests(tests):
             print_tests(test)
         elif isinstance(test, unittest.loader._FailedTest):
             name = test.id().replace("unittest.loader._FailedTest.", "")
-            print("Error: '{0}' does not match a test".format(name), file=sys.stderr)
+            print(f"Error: '{name}' does not match a test", file=sys.stderr)
         else:
             print(test.id().replace("__main__.", ""))
 

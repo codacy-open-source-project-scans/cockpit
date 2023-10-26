@@ -121,6 +121,7 @@ exit 1""", perm="755")
         b.wait_not_present("#sos-dialog")
 
         self.allow_journal_messages('.*comm="sosreport".*')
+        self.allow_browser_errors('error: Failed to call sos report: {"problem":null,"exit_status":1,"exit_signal":null')
 
     def testWithUrlRoot(self):
         self.testBasic(urlroot="/webcon")

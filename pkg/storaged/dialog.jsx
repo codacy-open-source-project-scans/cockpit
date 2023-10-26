@@ -354,12 +354,10 @@ export const dialog_open = (def) => {
     };
 
     const props = () => {
-        const title = (def.Action && (def.Action.Danger || def.Action.DangerButton)
-            ? <><ExclamationTriangleIcon className="ct-icon-exclamation-triangle" /> {def.Title}</>
-            : def.Title);
         return {
             id: "dialog",
-            title,
+            title: def.Title,
+            titleIconVariant: (def.Action && (def.Action.Danger || def.Action.DangerButton)) ? "warning" : null,
             body: <Body body={def.Body}
                         teardown={def.Teardown}
                         fields={nested_fields}
@@ -1109,13 +1107,13 @@ const UsersPopover = ({ users }) => {
             bodyContent={
                 <>
                     { services.length > 0
-                        ? <p>
-                            <b>{_("Services using the location")}</b>
+                        ? <>
+                            <p><b>{_("Services using the location")}</b></p>
                             <List>
                                 { services.slice(0, max).map((u, i) => <ListItem key={i}>{u.unit.replace(/\.service$/, "")}</ListItem>) }
                                 { services.length > max ? <ListItem key={max}>...</ListItem> : null }
                             </List>
-                        </p>
+                        </>
                         : null
                     }
                     { services.length > 0 && processes.length > 0
@@ -1123,13 +1121,13 @@ const UsersPopover = ({ users }) => {
                         : null
                     }
                     { processes.length > 0
-                        ? <p>
-                            <b>{_("Processes using the location")}</b>
+                        ? <>
+                            <p><b>{_("Processes using the location")}</b></p>
                             <List>
                                 { processes.slice(0, max).map((u, i) => <ListItem key={i}>{u.comm} (user: {u.user}, pid: {u.pid})</ListItem>) }
                                 { processes.length > max ? <ListItem key={max}>...</ListItem> : null }
                             </List>
-                        </p>
+                        </>
                         : null
                     }
                 </>}>
@@ -1140,9 +1138,17 @@ const UsersPopover = ({ users }) => {
         </Popover>);
 };
 
-export const TeardownMessage = (usage) => {
+function is_expected_unmount(usage, expect_single_unmount) {
+    return (expect_single_unmount && usage.length == 1 &&
+            usage[0].usage == "mounted" && usage[0].location == expect_single_unmount);
+}
+
+export const TeardownMessage = (usage, expect_single_unmount) => {
     if (usage.length == 0)
         return null;
+
+    if (is_expected_unmount(usage, expect_single_unmount))
+        return <StopProcessesMessage mount_point={expect_single_unmount} users={usage[0].users} />;
 
     const rows = [];
     usage.forEach((use, index) => {
@@ -1178,7 +1184,25 @@ export const TeardownMessage = (usage) => {
         </div>);
 };
 
-export function init_active_usage_processes(client, usage) {
+export function teardown_danger_message(usage, expect_single_unmount) {
+    if (is_expected_unmount(usage, expect_single_unmount))
+        return stop_processes_danger_message(usage[0].users);
+
+    const usage_with_users = usage.filter(u => u.users);
+    const n_processes = usage_with_users.reduce((sum, u) => sum + u.users.filter(u => u.pid).length, 0);
+    const n_services = usage_with_users.reduce((sum, u) => sum + u.users.filter(u => u.unit).length, 0);
+    if (n_processes > 0 && n_services > 0) {
+        return _("Related processes and services will be forcefully stopped.");
+    } else if (n_processes > 0) {
+        return _("Related processes will be forcefully stopped.");
+    } else if (n_services > 0) {
+        return _("Related services will be forcefully stopped.");
+    } else {
+        return null;
+    }
+}
+
+export function init_active_usage_processes(client, usage, expect_single_unmount) {
     return {
         title: _("Checking related processes"),
         func: dlg => {
@@ -1191,22 +1215,19 @@ export function init_active_usage_processes(client, usage) {
                 } else
                     return Promise.resolve();
             }).then(() => {
-                dlg.set_attribute("Teardown", TeardownMessage(usage));
-                const usage_with_users = usage.filter(u => u.users);
-                const n_processes = usage_with_users.reduce((sum, u) => sum + u.users.filter(u => u.pid).length, 0);
-                const n_services = usage_with_users.reduce((sum, u) => sum + u.users.filter(u => u.unit).length, 0);
-                if (n_processes > 0 && n_services > 0)
-                    dlg.add_danger(_("Related processes and services will be forcefully stopped."));
-                else if (n_processes > 0)
-                    dlg.add_danger(_("Related processes will be forcefully stopped."));
-                else if (n_services > 0)
-                    dlg.add_danger(_("Related services will be forcefully stopped."));
+                dlg.set_attribute("Teardown", TeardownMessage(usage, expect_single_unmount));
+                const msg = teardown_danger_message(usage, expect_single_unmount);
+                if (msg)
+                    dlg.add_danger(msg);
             });
         }
     };
 }
 
 export const StopProcessesMessage = ({ mount_point, users }) => {
+    if (!users || users.length == 0)
+        return null;
+
     const process_rows = users.filter(u => u.pid).map(u => {
         return {
             columns: [
@@ -1236,7 +1257,8 @@ export const StopProcessesMessage = ({ mount_point, users }) => {
     return (
         <div className="modal-footer-teardown">
             { process_rows.length > 0
-                ? <p>{fmt_to_fragments(_("The mount point $0 is in use by these processes:"), <b>{mount_point}</b>)}
+                ? <>
+                    <p>{fmt_to_fragments(_("The mount point $0 is in use by these processes:"), <b>{mount_point}</b>)}</p>
                     <ListingTable variant='compact'
                                   columns={
                                       [
@@ -1247,7 +1269,7 @@ export const StopProcessesMessage = ({ mount_point, users }) => {
                                       ]
                                   }
                                       rows={process_rows} />
-                </p>
+                </>
                 : null
             }
             { process_rows.length > 0 && service_rows.length > 0
@@ -1255,7 +1277,8 @@ export const StopProcessesMessage = ({ mount_point, users }) => {
                 : null
             }
             { service_rows.length > 0
-                ? <p>{fmt_to_fragments(_("The mount point $0 is in use by these services:"), <b>{mount_point}</b>)}
+                ? <>
+                    <p>{fmt_to_fragments(_("The mount point $0 is in use by these services:"), <b>{mount_point}</b>)}</p>
                     <ListingTable variant='compact'
                                   columns={
                                       [
@@ -1266,7 +1289,7 @@ export const StopProcessesMessage = ({ mount_point, users }) => {
                                       ]
                                   }
                                   rows={service_rows} />
-                </p>
+                </>
                 : null
             }
         </div>);
