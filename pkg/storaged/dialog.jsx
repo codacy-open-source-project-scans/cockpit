@@ -505,6 +505,14 @@ export const dialog_open = (def) => {
             update();
         },
 
+        get_options: (tag) => {
+            for (const f of fields) {
+                if (f.tag == tag) {
+                    return f.options;
+                }
+            }
+        },
+
         set_options: (tag, new_options) => {
             fields.forEach(f => {
                 if (f.tag == tag) {
@@ -680,6 +688,28 @@ export const SelectOneRadio = (tag, title, options) => {
     };
 };
 
+export const SelectOneRadioVertical = (tag, title, options) => {
+    return {
+        tag,
+        title,
+        options,
+        initial_value: options.value || options.choices[0].value,
+        hasNoPaddingTop: true,
+
+        render: (val, change) => {
+            return (
+                <div data-field={tag} data-field-type="select-radio">
+                    { options.choices.map(c => (
+                        <Radio key={c.value} isChecked={val == c.value} data-data={c.value}
+                            id={tag + '.' + c.value}
+                            onChange={() => change(c.value)} label={c.title} />))
+                    }
+                </div>
+            );
+        }
+    };
+};
+
 export const SelectRow = (tag, headers, options) => {
     return {
         tag,
@@ -720,8 +750,9 @@ export const SelectSpaces = (tag, title, options) => {
         tag,
         title,
         options,
-        initial_value: [],
+        initial_value: options.value || [],
         hasNoPaddingTop: options.spaces.length == 0,
+
         render: (val, change) => {
             if (options.spaces.length === 0)
                 return <span className="text-danger">{options.empty_warning}</span>;
@@ -735,8 +766,9 @@ export const SelectSpaces = (tag, title, options) => {
                         const desc = block === spc.desc ? "" : spc.desc;
 
                         const on_change = (_event, checked) => {
+                            // Be careful to keep "val" in the same order as "options.spaces".
                             if (checked && !selected)
-                                change(val.concat(spc));
+                                change(options.spaces.filter(v => val.indexOf(v) >= 0 || v == spc));
                             else if (!checked && selected)
                                 change(val.filter(v => (v != spc)));
                         };
@@ -745,6 +777,8 @@ export const SelectSpaces = (tag, title, options) => {
                             <DataListItem key={spc.block ? spc.block.Device : spc.desc}>
                                 <DataListItemRow>
                                     <DataListCheck id={(spc.block ? spc.block.Device : spc.desc) + "-row-checkbox"}
+                                                   isDisabled={options.min_selected &&
+                                                               selected && val.length <= options.min_selected}
                                                    isChecked={selected} onChange={on_change} />
                                     <label htmlFor={(spc.block ? spc.block.Device : spc.desc) + "-row-checkbox"}
                                            className='data-list-row-checkbox-label'>
@@ -943,7 +977,7 @@ class SizeSliderElement extends React.Component {
         const { unit } = this.state;
 
         const change_slider = (_event, f) => {
-            onChange(Math.max(min, size_slider_round(f * max / 100, round)));
+            onChange(Math.max(min, size_slider_round(f, round)));
         };
 
         const change_text = (value) => {
@@ -972,7 +1006,8 @@ class SizeSliderElement extends React.Component {
         return (
             <Grid hasGutter className="size-slider">
                 <GridItem span={12} sm={8}>
-                    <Slider showBoundaries={false} value={(slider_val / max) * 100} onChange={change_slider} />
+                    <Slider showBoundaries={false} min={min} max={max} step={(max - min) / 500}
+                            value={slider_val} onChange={change_slider} />
                 </GridItem>
                 <GridItem span={6} sm={2}>
                     <TextInputPF4 className="size-text" value={text_val} onChange={(_event, value) => change_text(value)} />

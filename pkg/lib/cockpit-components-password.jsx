@@ -18,16 +18,19 @@
  */
 import cockpit from 'cockpit';
 import React, { useState } from 'react';
+import { Button } from '@patternfly/react-core/dist/esm/components/Button/index.js';
 import { FormGroup, FormHelperText } from "@patternfly/react-core/dist/esm/components/Form/index.js";
+import { InputGroup, InputGroupItem } from '@patternfly/react-core/dist/esm/components/InputGroup/index.js';
 import { HelperText, HelperTextItem } from "@patternfly/react-core/dist/esm/components/HelperText/index.js";
 import { Popover } from "@patternfly/react-core/dist/esm/components/Popover/index.js";
 import { Progress, ProgressMeasureLocation, ProgressSize } from "@patternfly/react-core/dist/esm/components/Progress/index.js";
 import { TextInput } from "@patternfly/react-core/dist/esm/components/TextInput/index.js";
-import { HelpIcon } from '@patternfly/react-icons';
+import { EyeIcon, EyeSlashIcon, HelpIcon } from '@patternfly/react-icons';
 
 import { FormHelper } from "cockpit-components-form-helper";
 
 import './cockpit-components-password.scss';
+import { Flex, FlexItem } from '@patternfly/react-core';
 
 const _ = cockpit.gettext;
 
@@ -60,8 +63,10 @@ export const PasswordFormFields = ({
 }) => {
     const [password, setPassword] = useState(initial_password || "");
     const [passwordConfirm, setConfirmPassword] = useState("");
-    const [passwordStrength, setPasswordStrength] = useState("");
+    const [passwordStrength, setPasswordStrength] = useState();
     const [passwordMessage, setPasswordMessage] = useState("");
+    const [passwordHidden, setPasswordHidden] = useState(true);
+    const [passwordConfirmHidden, setPasswordConfirmHidden] = useState(true);
 
     function onPasswordChanged(value) {
         setPassword(value);
@@ -77,20 +82,34 @@ export const PasswordFormFields = ({
                         setPasswordMessage(strength.message);
                     });
         } else {
-            setPasswordStrength("");
+            setPasswordStrength();
             setPasswordMessage("");
         }
     }
 
     let variant;
-    if (passwordStrength === "")
-        variant = "default";
-    else if (passwordStrength > 66)
+    let message;
+    let messageColor;
+    if (passwordStrength > 66) {
         variant = "success";
-    else if (passwordStrength > 33)
+        messageColor = "pf-v5-u-success-color-200";
+        message = _("Strong password");
+    } else if (passwordStrength > 33) {
         variant = "warning";
-    else
+        messageColor = "pf-v5-u-warning-color-200";
+        message = _("Acceptable password");
+    } else {
         variant = "danger";
+        messageColor = "pf-v5-u-danger-color-200";
+        message = _("Weak password");
+    }
+
+    if (!passwordMessage && message)
+        setPasswordMessage(message);
+
+    let passwordStrengthValue = Number.isInteger(passwordStrength) ? Number.parseInt(passwordStrength) : -1;
+    if (password !== "" && (passwordStrengthValue >= 0 && passwordStrengthValue < 25))
+        passwordStrengthValue = 25;
 
     return (
         <>
@@ -99,26 +118,42 @@ export const PasswordFormFields = ({
                            <Popover bodyContent={password_label_info}>
                                <button onClick={e => e.preventDefault()}
                                        className="pf-v5-c-form__group-label-help">
-                                   <HelpIcon noVerticalAlign />
+                                   <HelpIcon />
                                </button>
                            </Popover>
                        }
                        validated={error_password ? "warning" : "default"}
                        id={idPrefix + "-pw1-group"}
                        fieldId={idPrefix + "-pw1"}>
-                <TextInput className="check-passwords" type="password" id={idPrefix + "-pw1"}
-                           autoComplete="new-password" value={password} onChange={(_event, value) => onPasswordChanged(value)}
-                           validated={error_password ? "warning" : "default"} />
-                <div>
-                    <Progress id={idPrefix + "-meter"}
-                              className={"ct-password-strength-meter " + variant}
-                              title={_("password quality")}
-                              size={ProgressSize.sm}
-                              measureLocation={ProgressMeasureLocation.none}
-                              variant={variant}
-                              value={Number.isInteger(passwordStrength) ? passwordStrength : 0} />
-                    <div id={idPrefix + "-password-meter-message"} className="pf-v5-c-form__helper-text" aria-live="polite">{passwordMessage}</div>
-                </div>
+                <InputGroup>
+                    <InputGroupItem isFill>
+                        <TextInput className="check-passwords" type={passwordHidden ? "password" : "text"} id={idPrefix + "-pw1"}
+                                   autoComplete="new-password" value={password} onChange={(_event, value) => onPasswordChanged(value)}
+                                   validated={error_password ? "warning" : "default"} />
+                    </InputGroupItem>
+                    <InputGroupItem>
+                        <Button
+                            variant="control"
+                            onClick={() => setPasswordHidden(!passwordHidden)}
+                            aria-label={passwordHidden ? _("Show password") : _("Hide password")}>
+                            {passwordHidden ? <EyeIcon /> : <EyeSlashIcon />}
+                        </Button>
+                    </InputGroupItem>
+                </InputGroup>
+                {passwordStrengthValue >= 0 && <Flex spaceItems={{ default: 'spaceItemsSm' }}>
+                    <FlexItem>
+                        <Progress id={idPrefix + "-meter"}
+                            className={"pf-v5-u-pt-xs ct-password-strength-meter " + variant}
+                            title={_("password quality")}
+                            size={ProgressSize.sm}
+                            measureLocation={ProgressMeasureLocation.none}
+                            variant={variant}
+                            value={passwordStrengthValue} />
+                    </FlexItem>
+                    <FlexItem>
+                        <div id={idPrefix + "-password-meter-message"} className={"pf-v5-c-form__helper-text " + messageColor} aria-live="polite">{passwordMessage}</div>
+                    </FlexItem>
+                </Flex>}
                 {error_password && <FormHelperText>
                     <HelperText component="ul" aria-live="polite" id="password-error-message">
                         <HelperTextItem isDynamic variant="warning" component="li">
@@ -131,8 +166,20 @@ export const PasswordFormFields = ({
             {password_confirm_label && <FormGroup label={password_confirm_label}
                        id={idPrefix + "-pw2-group"}
                        fieldId={idPrefix + "-pw2"}>
-                <TextInput type="password" id={idPrefix + "-pw2"} autoComplete="new-password"
-                           value={passwordConfirm} onChange={(_event, value) => { setConfirmPassword(value); change("password_confirm", value) }} />
+                <InputGroup>
+                    <InputGroupItem isFill>
+                        <TextInput type={passwordConfirmHidden ? "password" : "text"} id={idPrefix + "-pw2"} autoComplete="new-password"
+                            value={passwordConfirm} onChange={(_event, value) => { setConfirmPassword(value); change("password_confirm", value) }} />
+                    </InputGroupItem>
+                    <InputGroupItem>
+                        <Button
+                            variant="control"
+                            onClick={() => setPasswordConfirmHidden(!passwordConfirmHidden)}
+                            aria-label={passwordConfirmHidden ? _("Show confirmation password") : _("Hide confirmation password")}>
+                            {passwordConfirmHidden ? <EyeIcon /> : <EyeSlashIcon />}
+                        </Button>
+                    </InputGroupItem>
+                </InputGroup>
                 <FormHelper fieldId={idPrefix + "-pw2"} helperTextInvalid={error_password_confirm} />
             </FormGroup>}
         </>

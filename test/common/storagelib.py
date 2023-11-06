@@ -92,6 +92,28 @@ class StorageHelpers:
         self.addCleanup(self.machine.execute, f"umount {dev} || true; rm $(losetup -n -O BACK-FILE -l {dev}); until losetup -d {dev}; do sleep 1; done", timeout=10)
         return dev
 
+    def add_targetd_loopback_disk(self, index, size=50):
+        """Add per-test loopback device that can be forcefully removed.
+        """
+
+        m = self.machine
+        model = f"disk{index}"
+        wwn = f"naa.5000{index:012x}"
+
+        m.execute(f"rm -f /var/tmp/targetd.{model}")
+        m.execute(f"targetcli /backstores/fileio create name={model} size={size}M file_or_dev=/var/tmp/targetd.{model}")
+        m.execute(f"targetcli /loopback create {wwn}")
+        m.execute(f"targetcli /loopback/{wwn}/luns create /backstores/fileio/{model}")
+
+        self.addCleanup(m.execute, f"targetcli /loopback delete {wwn}")
+        self.addCleanup(m.execute, f"targetcli /backstores/fileio delete {model}")
+        self.addCleanup(m.execute, f"rm -f /var/tmp/targetd.{model}")
+
+        dev = m.execute(f'for dev in /sys/block/*; do if [ -f $dev/device/model ] && [ "$(cat $dev/device/model | tr -d [:space:])" == "{model}" ]; then echo /dev/$(basename $dev); fi; done').strip()
+        if dev == "":
+            raise Error("Device not found")
+        return dev
+
     def force_remove_disk(self, device):
         """Act like the given device gets physically removed.
 
@@ -131,8 +153,19 @@ class StorageHelpers:
 
     def content_dropdown_action(self, index, title):
         dropdown = self.content_row_tbody(index) + " tr td:last-child .pf-v5-c-dropdown"
-        self.browser.click(dropdown + " button.pf-v5-c-dropdown__toggle")
-        self.browser.click(dropdown + f" a:contains('{title}')")
+        btn = dropdown + f" a:contains('{title}')"
+
+        def step():
+            try:
+                if not self.browser.is_present(btn):
+                    self.browser.click(dropdown + " button.pf-v5-c-dropdown__toggle")
+                    self.browser.wait_visible(btn)
+                self.browser.click(btn)
+                return True
+            except Error:
+                return False
+
+        self.browser.wait(step)
 
     def content_tab_expand(self, row_index, tab_index):
         tab_btn = self.content_row_tbody(row_index) + " .pf-v5-c-tabs ul li:nth-child(%d) button" % tab_index
