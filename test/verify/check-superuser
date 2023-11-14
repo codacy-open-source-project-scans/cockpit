@@ -65,9 +65,12 @@ class TestSuperuser(testlib.MachineCase):
         b.drop_superuser()
 
         # We want to be lectured again
-        self.restore_file("/var/db/sudo/lectured/admin")
-        self.restore_file("/var/lib/sudo/lectured/admin")
+        self.restore_dir("/var/db/sudo/lectured")
+
         m.execute("rm -rf /var/{db,lib}/sudo/lectured/admin")
+        # Sudo since 1.9.15 uses a UID not a username https://www.sudo.ws/releases/stable/#1.9.15
+        uid = m.execute("id -u admin").strip()
+        m.execute(f"rm -rf /var/{{db,lib}}/sudo/lectured/{uid}")
 
         # Get the privileges back, this time in the mobile layout
         b.set_layout("mobile")

@@ -234,7 +234,15 @@ class Browser:
             self.cdp.invoke("Network.setCookie", **cookie)
 
         self.switch_to_top()
-        self.cdp.invoke("Page.navigate", url=href)
+        opts = {}
+        if self.cdp.browser.name == "firefox":
+            # by default, Firefox optimizes this away if the current and the given href URL
+            # are the same (Like in TestKeys.testAuthorizedKeys).
+            # Force a reload in this case, to make tests and the waitPageLoad below predictable
+            # But that option has the inverse effect with Chromium (argh)
+            opts["transitionType"] = "reload"
+        self.cdp.invoke("Page.navigate", url=href, **opts)
+        self.cdp.invoke("waitPageLoad", timeout=self.cdp.timeout)
 
     def set_user_agent(self, ua: str):
         """Set the user agent of the browser
@@ -1718,6 +1726,10 @@ class MachineCase(unittest.TestCase):
         # PackageKit crashes a lot; let that not be the sole reason for failing a test
         "error: Could not determine kpatch packages:.*PackageKit crashed",
     ]
+
+    if testvm.DEFAULT_IMAGE.startswith('rhel-8') or testvm.DEFAULT_IMAGE.startswith('centos-8'):
+        # old occasional bug in tracer, does not happen in newer versions any more
+        default_allowed_console_errors.append('Tracer failed:.*bus.get_unit_property_from_pid.*IndexError')
 
     env_allow = os.environ.get("TEST_ALLOW_BROWSER_ERRORS")
     if env_allow:

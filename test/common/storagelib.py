@@ -121,6 +121,8 @@ class StorageHelpers:
         the cleanup after a forceful removal.
         """
         self.machine.execute(f'echo 1 > /sys/block/{os.path.basename(device)}/device/delete')
+        # the removal trips up PCP and our usage graphs
+        self.allow_browser_errors("direct: instance name lookup failed.*")
 
     def devices_dropdown(self, title):
         self.browser.click("#devices .pf-v5-c-dropdown button.pf-v5-c-dropdown__toggle")
@@ -314,6 +316,9 @@ class StorageHelpers:
 
     def dialog_wait_apply_enabled(self):
         self.browser.wait_attr('#dialog button.apply:nth-of-type(1)', "disabled", None)
+
+    def dialog_wait_apply_disabled(self):
+        self.browser.wait_visible('#dialog button.apply:nth-of-type(1)[disabled]')
 
     def dialog_apply(self):
         self.browser.click('#dialog button.apply:nth-of-type(1)')

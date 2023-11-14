@@ -113,20 +113,20 @@ BEIBOOT_GADGETS = {
 
 
 class DefaultRoutingRule(RoutingRule):
-    peer: Peer
+    peer: 'Peer | None'
 
-    def __init__(self, router: Router, peer: Peer):
+    def __init__(self, router: Router):
         super().__init__(router)
-        self.peer = peer
 
-    def apply_rule(self, options: JsonObject) -> Peer:
+    def apply_rule(self, options: JsonObject) -> 'Peer | None':
         return self.peer
 
     def shutdown(self) -> None:
-        self.peer.close()
+        if self.peer is not None:
+            self.peer.close()
 
 
-class AuthorizeResponder(ferny.InteractionResponder):
+class AuthorizeResponder(ferny.AskpassHandler):
     commands = ('ferny.askpass', 'cockpit.report-exists')
     router: Router
 
@@ -184,8 +184,7 @@ class SshPeer(Peer):
     async def do_connect_transport(self) -> None:
         beiboot_helper = BridgeBeibootHelper(self)
 
-        agent = ferny.InteractionAgent(AuthorizeResponder(self.router))
-        agent.add_handler(beiboot_helper)
+        agent = ferny.InteractionAgent([AuthorizeResponder(self.router), beiboot_helper])
 
         # We want to run a python interpreter somewhere...
         cmd: Sequence[str] = ('python3', '-ic', '# cockpit-bridge')
@@ -260,11 +259,15 @@ class SshBridge(Router):
     ssh_peer: SshPeer
 
     def __init__(self, args: argparse.Namespace):
-        self.ssh_peer = SshPeer(self, args.destination, args)
+        # By default, we route everything to the other host.  We add an extra
+        # routing rule for the packages webserver only if we're running the
+        # beipack.
+        rule = DefaultRoutingRule(self)
+        super().__init__([rule])
 
-        super().__init__([
-            DefaultRoutingRule(self, self.ssh_peer),
-        ])
+        # This needs to be created after Router.__init__ is called.
+        self.ssh_peer = SshPeer(self, args.destination, args)
+        rule.peer = self.ssh_peer
 
     def do_send_init(self):
         pass  # wait for the peer to do it first

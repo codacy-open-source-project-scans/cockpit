@@ -69,16 +69,26 @@ function clearExceptions() {
 }
 
 function stringifyConsoleArg(arg) {
-    if (arg.type === 'string')
-        return arg.value;
-    if (arg.type === 'object') {
-        const obj = {};
-        arg.preview.properties.forEach(prop => {
-            obj[prop.name] = prop.value.toString();
-        });
-        return JSON.stringify(obj);
+    try {
+        if (arg.type === 'string')
+            return arg.value;
+        if (arg.type === 'number')
+            return arg.value;
+        if (arg.type === 'undefined')
+            return "undefined";
+        if (arg.value === null)
+            return "null";
+        if (arg.type === 'object' && arg.preview?.properties) {
+            const obj = {};
+            arg.preview.properties.forEach(prop => {
+                obj[prop.name] = prop.value.toString();
+            });
+            return JSON.stringify(obj);
+        }
+        return JSON.stringify(arg);
+    } catch (error) {
+        return "[error stringifying argument: " + error.toString() + "]";
     }
-    return JSON.stringify(arg);
 }
 
 function setupLogging(client) {
@@ -189,8 +199,10 @@ function setupFrameTracking(client) {
     });
 
     client.Page.loadEventFired(() => {
-        if (pageLoadHandler)
+        if (pageLoadHandler) {
+            debug("loadEventFired, resolving pageLoadHandler");
             pageLoadHandler();
+        }
     });
 
     // track execution contexts so that we can map between context and frame IDs
@@ -211,12 +223,22 @@ function setupFrameTracking(client) {
 }
 
 function setupLocalFunctions(client) {
-    client.reloadPageAndWait = (args) => {
-        return new Promise((resolve, reject) => {
-            pageLoadHandler = () => { pageLoadHandler = null; resolve({}) };
-            client.Page.reload(args);
-        });
-    };
+    client.waitPageLoad = (args) => new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            pageLoadHandler = null;
+            reject("Timeout waiting for page load"); // eslint-disable-line prefer-promise-reject-errors
+        }, (args.timeout ?? 15) * 1000);
+        pageLoadHandler = () => {
+            clearTimeout(timeout);
+            pageLoadHandler = null;
+            resolve({});
+        };
+    });
+
+    client.reloadPageAndWait = (args) => new Promise((resolve, reject) => {
+        pageLoadHandler = () => { pageLoadHandler = null; resolve({}) };
+        client.Page.reload(args);
+    });
 
     async function setCSS({ text, frame }) {
         await client.DOM.enable();
