@@ -241,6 +241,11 @@ class Browser:
             # Force a reload in this case, to make tests and the waitPageLoad below predictable
             # But that option has the inverse effect with Chromium (argh)
             opts["transitionType"] = "reload"
+        elif self.cdp.browser.name == 'chromium':
+            # Chromium also optimizes this away, but doesn't have a knob to force loading
+            # so load the blank page first
+            self.cdp.invoke("Page.navigate", url="about:blank")
+            self.cdp.invoke("waitPageLoad", timeout=5)
         self.cdp.invoke("Page.navigate", url=href, **opts)
         self.cdp.invoke("waitPageLoad", timeout=self.cdp.timeout)
 
@@ -1538,10 +1543,12 @@ class MachineCase(unittest.TestCase):
                         "for dev in $(ls /sys/bus/pseudo/drivers/scsi_debug/adapter*/host*/target*/*:*/block); do "
                         "    for s in /sys/block/*/slaves/${dev}*; do [ -e $s ] || break; "
                         "        d=/dev/$(dirname $(dirname ${s#/sys/block/})); "
+                        "        while fuser --mount $d --kill; do sleep 0.1; done; "
                         "        umount $d || true; dmsetup remove --force $d || true; "
                         "    done; "
-                        "    umount /dev/$dev 2>/dev/null || true; "
-                        "done; until rmmod scsi_debug; do sleep 0.2; done")
+                        "    while fuser --mount /dev/$dev --kill; do sleep 0.1; done; "
+                        "    umount /dev/$dev || true; "
+                        "done; until rmmod scsi_debug; do sleep 0.2; done", stdout=None)
 
         def terminate_sessions():
             # on OSTree we don't get "web console" sessions with the cockpit/ws container; just SSH; but also, some tests start
@@ -1694,9 +1701,9 @@ class MachineCase(unittest.TestCase):
         "For security reasons, the password you type will not be visible",
 
         # starting out with empty PCP logs and pmlogger not running causes these metrics channel messages
-        "pcp-archive: no such metric: .*: Unknown metric name",
-        "pcp-archive: instance name lookup failed:.*",
-        "pcp-archive: couldn't create pcp archive context for.*",
+        "(direct|pcp-archive): no such metric: .*: Unknown metric name",
+        "(direct|pcp-archive): instance name lookup failed:.*",
+        "(direct|pcp-archive): couldn't create pcp archive context for.*",
 
         # timedatex.service shuts down after timeout, runs into race condition with property watching
         ".*org.freedesktop.timedate1: couldn't get all properties.*Error:org.freedesktop.DBus.Error.NoReply.*",
@@ -1728,8 +1735,8 @@ class MachineCase(unittest.TestCase):
     ]
 
     if testvm.DEFAULT_IMAGE.startswith('rhel-8') or testvm.DEFAULT_IMAGE.startswith('centos-8'):
-        # old occasional bug in tracer, does not happen in newer versions any more
-        default_allowed_console_errors.append('Tracer failed:.*bus.get_unit_property_from_pid.*IndexError')
+        # old occasional bugs in tracer, don't happen in newer versions any more
+        default_allowed_console_errors.append('Tracer failed:.*Traceback')
 
     env_allow = os.environ.get("TEST_ALLOW_BROWSER_ERRORS")
     if env_allow:
