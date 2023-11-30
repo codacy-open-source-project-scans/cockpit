@@ -20,7 +20,7 @@ import logging
 from typing import Dict, List, Optional
 
 from .jsonutil import JsonDocument, JsonObject
-from .protocol import CockpitProtocolError, CockpitProtocolServer
+from .protocol import CockpitProblem, CockpitProtocolError, CockpitProtocolServer
 
 logger = logging.getLogger(__name__)
 
@@ -92,23 +92,20 @@ class Endpoint:
     def send_channel_data(self, channel: str, data: bytes) -> None:
         self.router.write_channel_data(channel, data)
 
-    def send_channel_message(self, channel: str, **kwargs: JsonDocument) -> None:
-        self.router.write_message(channel, **kwargs)
-
-    def send_channel_control(self, channel, command, **kwargs: JsonDocument) -> None:
-        self.router.write_control(channel=channel, command=command, **kwargs)
+    def send_channel_control(
+        self, channel: str, command: str, _msg: 'JsonObject | None', **kwargs: JsonDocument
+    ) -> None:
+        self.router.write_control(_msg, channel=channel, command=command, **kwargs)
         if command == 'close':
             self.router.endpoints[self].remove(channel)
             self.router.drop_channel(channel)
 
-    def shutdown_endpoint(self, **kwargs: JsonDocument) -> None:
-        self.router.shutdown_endpoint(self, **kwargs)
+    def shutdown_endpoint(self, _msg: 'JsonObject | None' = None, **kwargs: JsonDocument) -> None:
+        self.router.shutdown_endpoint(self, _msg, **kwargs)
 
 
-class RoutingError(Exception):
-    def __init__(self, problem, **kwargs):
-        self.problem = problem
-        self.kwargs = kwargs
+class RoutingError(CockpitProblem):
+    pass
 
 
 class RoutingRule:
@@ -163,11 +160,11 @@ class Router(CockpitProtocolServer):
         except KeyError:
             logger.error('trying to drop non-existent channel %s from %s', channel, self.open_channels)
 
-    def shutdown_endpoint(self, endpoint: Endpoint, **kwargs) -> None:
+    def shutdown_endpoint(self, endpoint: Endpoint, _msg: 'JsonObject | None' = None, **kwargs: JsonDocument) -> None:
         channels = self.endpoints.pop(endpoint)
         logger.debug('shutdown_endpoint(%s, %s) will close %s', endpoint, kwargs, channels)
         for channel in channels:
-            self.write_control(command='close', channel=channel, **kwargs)
+            self.write_control(_msg, command='close', channel=channel, **kwargs)
             self.drop_channel(channel)
 
         # were we waiting to exit?
@@ -195,7 +192,7 @@ class Router(CockpitProtocolServer):
                 logger.debug('Trying to find endpoint for new channel %s payload=%s', channel, message.get('payload'))
                 endpoint = self.check_rules(message)
             except RoutingError as exc:
-                self.write_control(command='close', channel=channel, problem=exc.problem, **exc.kwargs)
+                self.write_control(exc.attrs, command='close', channel=channel)
                 return
 
             self.open_channels[channel] = endpoint

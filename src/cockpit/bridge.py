@@ -138,13 +138,15 @@ class Bridge(Router, PackagesListener):
     def do_send_init(self) -> None:
         init_args = {
             'capabilities': {'explicit-superuser': True},
+            'command': 'init',
             'os-release': self.get_os_release(),
+            'version': 1,
         }
 
         if self.packages is not None:
             init_args['packages'] = {p: None for p in self.packages.packages}
 
-        self.write_control(command='init', version=1, **init_args)
+        self.write_control(init_args)
 
     # PackagesListener interface
     def packages_loaded(self) -> None:
@@ -154,11 +156,6 @@ class Bridge(Router, PackagesListener):
             self.superuser_rule.set_configs(bridge_configs)
             self.peers_rule.set_configs(bridge_configs)
             self.bridge_configs = bridge_configs
-
-    def eof_received(self) -> bool:
-        # HACK: Make sure there's no outstanding sudo prompts blocking our shutdown
-        self.superuser_rule.cancel_prompt()
-        return super().eof_received()
 
 
 async def run(args) -> None:
