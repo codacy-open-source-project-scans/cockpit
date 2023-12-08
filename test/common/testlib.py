@@ -912,6 +912,15 @@ class Browser:
             # strip off parameters after hash
             self.enter_page(path.split('#')[0].rstrip('/'))
 
+    def get_pf_progress_value(self, progress_bar_sel):
+        """Get numeric value of a PatternFly <ProgressBar> component"""
+        sel = progress_bar_sel + " .pf-v5-c-progress__indicator"
+        self.wait_visible(sel)
+        self.wait_attr_contains(sel, "style", "width:")
+        style = self.attr(sel, "style")
+        m = re.search(r"width: (\d+)%;", style)
+        return int(m.group(1))
+
     def ignore_ssl_certificate_errors(self, ignore: bool):
         action = ignore and "continue" or "cancel"
         if opts.trace:
@@ -1013,11 +1022,6 @@ class Browser:
         if not (Image and self.pixels_label):
             return
 
-        if mock is not None:
-            self.set_mock(mock, base=selector)
-            if sit_after_mock:
-                sit()
-
         self._adjust_window_for_fixed_content_size()
         self.call_js_func('ph_scrollIntoViewIfNeeded', scroll_into_view or selector)
         self.call_js_func('ph_blur_active')
@@ -1045,6 +1049,11 @@ class Browser:
         if wait_animations:
             time.sleep(wait_delay)
             self.wait_js_cond('ph_count_animations(%s) == 0' % jsquote(selector))
+
+        if mock is not None:
+            self.set_mock(mock, base=selector)
+            if sit_after_mock:
+                sit()
 
         rect = self.call_js_func('ph_element_clip', selector)
 
@@ -1548,6 +1557,7 @@ class MachineCase(unittest.TestCase):
                         "    done; "
                         "    while fuser --mount /dev/$dev --kill; do sleep 0.1; done; "
                         "    umount /dev/$dev || true; "
+                        "    swapon --show=NAME --noheadings | grep $dev | xargs -r swapoff; "
                         "done; until rmmod scsi_debug; do sleep 0.2; done", stdout=None)
 
         def terminate_sessions():
@@ -1839,31 +1849,6 @@ class MachineCase(unittest.TestCase):
             # can happen on shutdown when /run/systemd/coredump is gone already
             self.allowed_messages.append("Failed to connect to coredump service: No such file or directory")
             self.allowed_messages.append("Failed to connect to coredump service: Connection refused")
-
-        #
-        # HACK: pybridge bugs
-        #
-        # https://github.com/cockpit-project/cockpit/issues/18386
-        self.allowed_messages += [
-            "asyncio-ERROR: Task was destroyed but it is pending!",
-            "task:.*Task pending.*cockpit/channels/dbus.py.*"]
-        # happens fairly reliably with TestKeys.testAuthorizedKeys, TestConnection.testTls and TestHistoryMetrics.testEvents
-        self.allowed_messages.append('cockpit.router-ERROR: trying to drop non-existent channel .* from .*')
-
-        # https://github.com/cockpit-project/cockpit/issues/18355
-        self.allowed_messages += [
-            "[eE]xception ignored in:.*DBusChannel.setup_path_watch.*",
-            "Traceback .*most recent call last.*",
-            "File .*",
-            "async with self.watch_processing_lock:",
-            "self.send_message.*",
-            "self.release.*",
-            "self._wake_up_first.*",
-            "fut.set_result.*",
-            "self._check_closed.*",
-            "raise RuntimeError.*",
-            "RuntimeError: Event loop is closed",
-        ]
 
         messages = machine.journal_messages(matches, 6, cursor=cursor)
 
