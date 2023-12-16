@@ -128,22 +128,30 @@ class TestWireGuard(packagelib.PackageCase, netlib.NetworkCase):
         b.wait_in_text(f"#networking-interfaces th:contains('{iface_name}') + td", f"1.2.3.4/32, {m1_ip4}/24")
 
         # if some wg properties are not valid, for example, if it was changed by some external tool, don't crash
-        m1.execute("sed -i '/allowed-ips/d' /etc/NetworkManager/system-connections/con-wg0.nmconnection")
-        m1.execute("systemctl restart NetworkManager")
-        b.reload()
-        b.enter_page("/network")
-        b.wait_visible("#networking")
+        # this doesn't work on Ubuntu as the config is done through netplan; but this is just testing
+        # handling of internal errors, so it's ok to skip it
+        invalid_props_test = not m1.image.startswith("ubuntu")
+        if invalid_props_test:
+            m1.execute("sed -i '/allowed-ips/d' /etc/NetworkManager/system-connections/con-wg0.nmconnection")
+            m1.execute("systemctl restart NetworkManager")
+            b.reload()
+            b.enter_page("/network")
+            b.wait_visible("#networking")
+
         b.click(f"#networking-interfaces button:contains('{iface_name}')")
         b.wait_visible("#network-interface")
         b.click("#networking-edit-wg")
-        b.click("#network-wireguard-settings-save")
-        b.wait_visible(".pf-v5-c-alert:contains('has invalid allowed-ips')")
+
+        if invalid_props_test:
+            b.click("#network-wireguard-settings-save")
+            b.wait_visible(".pf-v5-c-alert:contains('has invalid allowed-ips')")
+
         b.set_input_text("#network-wireguard-settings-allowedips-peer-0", m2_ip4)
         b.click("#network-wireguard-settings-save")
         b.wait_not_present("#network-wireguard-settings-dialog")
 
-        m1.execute("until wg show wg0 | grep -q 'allowed ips.*10.0.0.2/32'; do sleep 1; done")
-        m1.execute("until ip route | grep -q '10.0.0.0/24 dev wg0 proto kernel scope link src 10.0.0.1 metric 50'; do sleep 1; done")
+        m1.execute(f"until wg show wg0 | grep -q 'allowed ips.*{m2_ip4}/32'; do sleep 1; done")
+        m1.execute(f"until ip route | grep -q '10.0.0.0/24 dev wg0 proto kernel scope link src {m1_ip4} metric 50'; do sleep 1; done")
 
         # endpoint and port is not necessary for a peer if that peer estalishes the connectio first (i.e. the client)
         b2.click("button:contains('Add peer')")
@@ -172,7 +180,7 @@ class TestWireGuard(packagelib.PackageCase, netlib.NetworkCase):
         b2.click("#network-wireguard-settings-save")
         b2.wait_not_present("#network-wireguard-settings-dialog")
 
-        m2.execute("until wg show wg0 | grep -q 'allowed ips.*2001::1/128'; do sleep 1; done")
+        m2.execute(f"until wg show wg0 | grep -q 'allowed ips.*{m1_ip6}/128'; do sleep 1; done")
 
         b2.click("#networking-edit-ipv6")
         b2.wait_visible("#network-ip-settings-dialog")
@@ -192,7 +200,7 @@ class TestWireGuard(packagelib.PackageCase, netlib.NetworkCase):
         b.click("#network-wireguard-settings-save")
         b.wait_not_present("#network-wireguard-settings-dialog")
 
-        m1.execute("until wg show wg0 | grep -q 'allowed ips.*2001::2/128'; do sleep 1; done")
+        m1.execute(f"until wg show wg0 | grep -q 'allowed ips.*{m2_ip6}/128'; do sleep 1; done")
 
         b.click("#networking-edit-ipv6")
         b.wait_visible("#network-ip-settings-dialog")

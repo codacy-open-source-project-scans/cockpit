@@ -20,6 +20,7 @@ import contextlib
 import functools
 import gzip
 import io
+import itertools
 import json
 import logging
 import mimetypes
@@ -265,10 +266,21 @@ class Package:
                 # Accept-Language is case-insensitive and uses '-' to separate variants
                 lower_locale = locale.lower().replace('_', '-')
 
+                logger.debug('Adding translation %r %r -> %r', basename, lower_locale, name)
                 self.translations[f'{basename}.js'][lower_locale] = name
             else:
-                basename = name[:-3] if name.endswith('.gz') else name
+                # strip out trailing '.gz' components
+                basename = re.sub('.gz$', '', name)
+                logger.debug('Adding content %r -> %r', basename, name)
                 self.files[basename] = name
+
+                # If we see a filename like `x.min.js` we want to also offer it
+                # at `x.js`, but only if `x.js(.gz)` itself is not present.
+                # Note: this works for both the case where we found the `x.js`
+                # first (it's already in the map) and also if we find it second
+                # (it will be replaced in the map by the line just above).
+                # See https://github.com/cockpit-project/cockpit/pull/19716
+                self.files.setdefault(basename.replace('.min.', '.'), name)
 
         # support old cockpit-po-plugin which didn't write po.manifest.??.js
         if not self.translations['po.manifest.js']:
@@ -490,8 +502,13 @@ class Packages(bus.Object, interface='cockpit.Packages'):
     def show(self):
         for name in sorted(self.packages):
             package = self.packages[name]
-            menuitems = ''
-            print(f'{name:20} {menuitems:40} {package.path}')
+            menuitems = []
+            for entry in itertools.chain(
+                    package.manifest.get('menu', {}).values(),
+                    package.manifest.get('tools', {}).values()):
+                with contextlib.suppress(KeyError):
+                    menuitems.append(entry['label'])
+            print(f'{name:20} {", ".join(menuitems):40} {package.path}')
 
     def get_bridge_configs(self) -> Sequence[BridgeConfig]:
         def yield_configs():
