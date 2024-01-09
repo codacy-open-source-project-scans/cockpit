@@ -415,7 +415,8 @@ export const dialog_open = (def) => {
                     caption: def.Action.Title,
                     style: "primary",
                     danger: def.Action.Danger || def.Action.DangerButton,
-                    disabled: running_promise != null || (def.Action.disable_on_error && errors),
+                    disabled: running_promise != null || (def.Action.disable_on_error &&
+                                                          errors && errors.toString() != "[object Object]"),
                     clicked: progress_callback => run_action(progress_callback, null),
                 }
             ];
@@ -1106,7 +1107,8 @@ export const BlockingMessage = (usage) => {
         pvol: _("physical volume of LVM2 volume group"),
         "mdraid-member": _("member of MDRAID device"),
         vdo: _("backing device for VDO device"),
-        "stratis-pool-member": _("member of Stratis pool")
+        "stratis-pool-member": _("member of Stratis pool"),
+        mounted: _("Filesystem outside the target"),
     };
 
     const rows = [];
@@ -1196,9 +1198,15 @@ export const TeardownMessage = (usage, expect_single_unmount) => {
             const name = (fsys
                 ? fsys.Devnode
                 : block_name(client.blocks[use.block.CryptoBackingDevice] || use.block));
+            let location = use.location;
+            if (use.usage == "mounted") {
+                location = client.strip_mount_point_prefix(location);
+                if (location === false)
+                    location = _("(Not part of target)");
+            }
             rows.push({
                 columns: [name,
-                    use.location || "-",
+                    location || "-",
                     use.actions.length ? use.actions.join(", ") : "-",
                     {
                         title: <UsersPopover users={use.users || []} />,

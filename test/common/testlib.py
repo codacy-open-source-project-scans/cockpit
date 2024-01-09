@@ -608,6 +608,9 @@ class Browser:
                                          expression="ph_wait_cond(() => %s, %i, %s)" % (cond, timeout * 1000, error_description),
                                          silent=False, awaitPromise=True, trace="wait: " + cond)
                 if "exceptionDetails" in result:
+                    if self.cdp.browser.name == "firefox" and count < 20 and "ph_wait_cond is not defined" in result["exceptionDetails"].get("text", ""):
+                        time.sleep(0.1)
+                        continue
                     trailer = "\n".join(self.cdp.get_js_log())
                     self.raise_cdp_exception("timeout\nwait_js_cond", cond, result["exceptionDetails"], trailer)
                 if timeout > 0:
@@ -1604,7 +1607,7 @@ class MachineCase(unittest.TestCase):
 
             # Restart logind to mop up empty "closing" sessions, and clean user id cache for non-system users
             self.machine.execute("systemctl stop systemd-logind; cd /run/systemd/users/; "
-                                 "for f in *; do [ $f -le 500 ] || rm $f; done")
+                                 "for f in $(ls); do [ $f -le 500 ] || rm $f; done")
 
         self.addCleanup(terminate_sessions)
 
