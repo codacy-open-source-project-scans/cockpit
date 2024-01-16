@@ -5,7 +5,7 @@ import { EmptyState, EmptyStateBody } from "@patternfly/react-core/dist/esm/comp
 import { FormFieldGroup, FormFieldGroupHeader } from "@patternfly/react-core/dist/esm/components/Form";
 import { HelperText, HelperTextItem } from "@patternfly/react-core/dist/esm/components/HelperText";
 
-import './DynamicListForm.scss';
+import './cockpit-components-dynamic-list.scss';
 
 /* Dynamic list with a variable number of rows. Each row is a custom component, usually an input field(s).
  *
@@ -47,25 +47,26 @@ export class DynamicListForm extends React.Component {
         this.props.onValidationChange?.(validationFailedDelta);
 
         this.setState(state => {
-            const items = state.list.concat();
-            items.splice(idx, 1);
+            const items = [...state.list];
+            // keep the list structure, otherwise all the indexes shift and the ID/key mapping gets broken
+            delete items[idx];
 
             return { list: items };
-        }, () => this.props.onChange(this.state.list.concat()));
+        }, () => this.props.onChange(this.state.list));
     }
 
     addItem() {
         this.setState(state => {
-            return { list: [...state.list, Object.assign({ key: this.keyCounter++ }, this.props.default)] };
-        }, () => this.props.onChange(this.state.list.concat()));
+            return { list: [...state.list, {key: this.keyCounter++, ...this.props.default}] };
+        }, () => this.props.onChange(this.state.list));
     }
 
     onItemChange(idx, field, value) {
         this.setState(state => {
-            const items = state.list.concat();
+            const items = [...state.list];
             items[idx][field] = value || null;
             return { list: items };
-        }, () => this.props.onChange(this.state.list.concat()));
+        }, () => this.props.onChange(this.state.list));
     }
 
     render () {
@@ -79,9 +80,12 @@ export class DynamicListForm extends React.Component {
                 />
             } className={"dynamic-form-group " + formclass}>
                 {
-                    dialogValues.list.length
+                    dialogValues.list.some(item => item !== undefined)
                         ? <>
                             {dialogValues.list.map((item, idx) => {
+                                if (item === undefined)
+                                    return null;
+
                                 return React.cloneElement(this.props.itemcomponent, {
                                     idx,
                                     item,
@@ -91,7 +95,6 @@ export class DynamicListForm extends React.Component {
                                     removeitem: this.removeItem,
                                     additem: this.addItem,
                                     options: this.props.options,
-                                    itemCount: Object.keys(dialogValues.list).length,
                                     validationFailed: validationFailed && validationFailed[idx],
                                     onValidationChange: value => {
                                         // Dynamic list consists of multiple rows. Therefore validationFailed object is presented as an array where each item represents a row
