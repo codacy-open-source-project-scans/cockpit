@@ -21,9 +21,10 @@ import '../lib/patternfly/patternfly-5-cockpit.scss';
 import cockpit from "cockpit";
 
 import React, { useEffect, useState } from "react";
+import { Alert } from "@patternfly/react-core/dist/esm/components/Alert/index.js";
 import { Button } from "@patternfly/react-core/dist/esm/components/Button/index.js";
 import { Checkbox } from "@patternfly/react-core/dist/esm/components/Checkbox/index.js";
-import { Card, CardBody } from "@patternfly/react-core/dist/esm/components/Card/index.js";
+import { Card, CardBody, CardTitle } from "@patternfly/react-core/dist/esm/components/Card/index.js";
 import { HelperText, HelperTextItem } from "@patternfly/react-core/dist/esm/components/HelperText/index.js";
 import { Flex, FlexItem } from "@patternfly/react-core/dist/esm/layouts/Flex/index.js";
 import { Form, FormGroup, FormSection } from "@patternfly/react-core/dist/esm/components/Form/index.js";
@@ -37,8 +38,7 @@ import { Switch } from "@patternfly/react-core/dist/esm/components/Switch/index.
 import { Text, TextContent, TextVariants } from "@patternfly/react-core/dist/esm/components/Text/index.js";
 import { TextInput } from "@patternfly/react-core/dist/esm/components/TextInput/index.js";
 import { Title } from "@patternfly/react-core/dist/esm/components/Title/index.js";
-import { Tooltip, TooltipPosition } from "@patternfly/react-core/dist/esm/components/Tooltip/index.js";
-import { OutlinedQuestionCircleIcon } from "@patternfly/react-icons";
+import { Tooltip } from "@patternfly/react-core/dist/esm/components/Tooltip/index.js";
 
 import { useDialogs, DialogsContext } from "dialogs.jsx";
 import { read_os_release } from "os-release.js";
@@ -112,6 +112,19 @@ const exportAnsibleTask = (settings, os_release) => {
 
     return ansible;
 };
+
+function getLocation(target) {
+    let path = target.path || DEFAULT_KDUMP_PATH;
+
+    if (target.type === "ssh") {
+        path = `${target.server}:${path}`;
+    } else if (target.type == "nfs") {
+        path = path[0] !== '/' ? '/' + path : path;
+        path = `${target.server}:${target.export + path}`;
+    }
+
+    return path;
+}
 
 const KdumpSettingsModal = ({ settings, initialTarget, handleSave }) => {
     const Dialogs = useDialogs();
@@ -338,18 +351,17 @@ export class KdumpPage extends React.Component {
         const target = this.props.kdumpStatus.target;
         let verifyMessage;
         if (!target.multipleTargets) {
-            let path = target.path || DEFAULT_KDUMP_PATH;
+            const path = getLocation(target);
             if (target.type === "local") {
                 verifyMessage = fmt_to_fragments(
                     ' ' + _("Results of the crash will be stored in $0 as $1, if kdump is properly configured."),
                     <span className="pf-v5-u-font-family-monospace-vf">{path}</span>,
                     <span className="pf-v5-u-font-family-monospace-vf">vmcore</span>);
             } else if (target.type === "ssh" || target.type == "nfs") {
-                path = (target.type == "nfs" && path[0] !== '/') ? '/' + path : path;
                 verifyMessage = fmt_to_fragments(
                     ' ' + _("Results of the crash will be copied through $0 to $1 as $2, if kdump is properly configured."),
                     <span className="pf-v5-u-font-family-monospace-vf">{target.type === "ssh" ? "SSH" : "NFS"}</span>,
-                    <span className="pf-v5-u-font-family-monospace-vf">{`${target.server}:${target.type === "nfs" ? target.export + path : path}`}</span>,
+                    <span className="pf-v5-u-font-family-monospace-vf">{path}</span>,
                     <span className="pf-v5-u-font-family-monospace-vf">vmcore</span>);
             }
         }
@@ -433,17 +445,15 @@ ${enableCrashKernel}
             if (target.multipleTargets) {
                 kdumpLocation = _("invalid: multiple targets defined");
             } else {
+                const locationPath = getLocation(target);
                 if (target.type == "local") {
-                    if (target.path)
-                        kdumpLocation = cockpit.format(_("locally in $0"), target.path);
-                    else
-                        kdumpLocation = cockpit.format(_("locally in $0"), DEFAULT_KDUMP_PATH);
+                    kdumpLocation = cockpit.format(_("Local, $0"), locationPath);
                     targetCanChange = true;
                 } else if (target.type == "ssh") {
-                    kdumpLocation = _("Remote over SSH");
+                    kdumpLocation = cockpit.format(_("Remote over SSH, $0"), locationPath);
                     targetCanChange = true;
                 } else if (target.type == "nfs") {
-                    kdumpLocation = _("Remote over NFS");
+                    kdumpLocation = cockpit.format(_("Remote over NFS, $0"), locationPath);
                     targetCanChange = true;
                 } else if (target.type == "raw") {
                     kdumpLocation = _("Raw to a device");
@@ -463,9 +473,7 @@ ${enableCrashKernel}
             }
         }
         // this.storeLocation(this.props.kdumpStatus.config);
-        const settingsLink = targetCanChange
-            ? <Button variant="link" isInline id="kdump-change-target" onClick={this.handleSettingsClick}>{ kdumpLocation }</Button>
-            : <span id="kdump-target-info">{ kdumpLocation }</span>;
+        const settingsLink = targetCanChange && <Button variant="link" isInline id="kdump-change-target" onClick={this.handleSettingsClick}>{_("Edit")}</Button>;
         let reservedMemory;
         if (this.props.reservedMemory === undefined) {
             // still waiting for result
@@ -476,10 +484,8 @@ ${enableCrashKernel}
                 </div>
             );
         } else if (this.props.reservedMemory == 0) {
-            // nothing reserved, give hint
-            reservedMemory = (
-                <span>{_("None")} </span>
-            );
+            // nothing reserved
+            reservedMemory = <span>{_("None")} </span>;
         } else if (this.props.reservedMemory == "error") {
             // error while reading
         } else {
@@ -492,52 +498,10 @@ ${enableCrashKernel}
                              this.props.kdumpStatus.installed &&
                              this.props.kdumpStatus.state == "running";
 
-        let kdumpServiceDetails;
-        let serviceDescription;
-        let serviceHint;
-        if (this.props.kdumpStatus && this.props.kdumpStatus.installed) {
-            if (this.props.kdumpStatus.state == "running")
-                serviceDescription = <span>{_("Service is running")}</span>;
-            else if (this.props.kdumpStatus.state == "stopped")
-                serviceDescription = <span>{_("Service is stopped")}</span>;
-            else if (this.props.kdumpStatus.state == "failed")
-                serviceDescription = <span>{_("Service has an error")}</span>;
-            else if (this.props.kdumpStatus.state == "starting")
-                serviceDescription = <span>{_("Service is starting")}</span>;
-            else if (this.props.kdumpStatus.state == "stopping")
-                serviceDescription = <span>{_("Service is stopping")}</span>;
-            if (this.props.reservedMemory == 0) {
-                const tooltip = _("No memory reserved. Append a crashkernel option to the kernel command line (e.g. in /etc/default/grub) to reserve memory at boot time. Example: crashkernel=512M");
-                serviceHint = (
-                    <Tooltip id="tip-service" content={tooltip} position={TooltipPosition.bottom}>
-                        <OutlinedQuestionCircleIcon className="popover-ct-kdump" />
-                    </Tooltip>
-                );
-            }
-            kdumpServiceDetails = (
-                <>
-                    {serviceDescription}
-                    {serviceHint}
-                    <Button variant="link" isInline className="service-link-ct-kdump" onClick={this.handleServiceDetailsClick}>{_("more details")}</Button>
-                </>
-            );
-        } else if (this.props.kdumpStatus && !this.props.kdumpStatus.installed) {
-            const tooltip = _("Kdump service not installed. Please ensure package kexec-tools is installed.");
-            // FIXME: Accessibility needs to be improved: https://github.com/patternfly/patternfly-react/issues/5535
-            kdumpServiceDetails = (
-                <Tooltip id="tip-service" content={tooltip} position={TooltipPosition.bottom}>
-                    <OutlinedQuestionCircleIcon className="popover-ct-kdump" />
-                </Tooltip>
-            );
-        }
-        let serviceWaiting;
-        if (this.props.stateChanging)
-            serviceWaiting = <Spinner size="md" />;
-
         let testButton;
         if (serviceRunning) {
             testButton = (
-                <PrivilegedButton variant="secondary"
+                <PrivilegedButton variant="secondary" isDanger
                                   excuse={ _("The user $0 is not permitted to test crash the kernel") }
                                   onClick={this.handleTestSettingsClick}>
                     { _("Test configuration") }
@@ -547,13 +511,12 @@ ${enableCrashKernel}
             const tooltip = _("Test is only available while the kdump service is running.");
             testButton = (
                 <Tooltip id="tip-test" content={tooltip}>
-                    <Button variant="secondary" isAriaDisabled>
+                    <Button variant="secondary" isDanger isAriaDisabled>
                         {_("Test configuration")}
                     </Button>
                 </Tooltip>
             );
         }
-        const tooltip_info = _("This will test the kdump configuration by crashing the kernel.");
 
         let automationButton = null;
         if (this.props.kdumpStatus && this.props.kdumpStatus.config !== null && this.state.os_release !== null && targetCanChange) {
@@ -566,15 +529,49 @@ ${enableCrashKernel}
             );
         }
 
-        let kdumpSwitch = (<Switch isChecked={!!serviceRunning}
-                              onChange={this.props.onSetServiceState}
-                              aria-label={_("kdump status")}
-                              isDisabled={this.props.stateChanging || !this.props.kdumpCmdlineEnabled} />);
+        let kdumpSwitch;
+        let kdumpSwitchHelper;
         if (!this.props.kdumpCmdlineEnabled) {
-            kdumpSwitch = (
-                <Tooltip content={_("crashkernel not configured in the kernel command line")} position={TooltipPosition.right}>
-                    {kdumpSwitch}
-                </Tooltip>);
+            kdumpSwitchHelper = _("Currently not supported");
+        } else {
+            kdumpSwitch = (<Switch isChecked={!!serviceRunning}
+                onChange={this.props.onSetServiceState}
+                aria-label={_("kdump status")}
+                isDisabled={this.props.stateChanging} />);
+            kdumpSwitchHelper = serviceRunning ? _("Enabled") : _("Disabled");
+        }
+
+        let alertMessage;
+        let alertDetail;
+        if (!this.props.stateChanging && this.props.kdumpStatus && this.props.kdumpStatus.installed !== undefined) {
+            if (this.props.kdumpStatus.installed) {
+                if (this.props.reservedMemory == 0) {
+                    alertMessage = fmt_to_fragments(
+                        _("Kernel did not boot with the $0 setting"),
+                        <span className="pf-v5-u-font-family-monospace-vf">crashkernel</span>
+                    );
+                    alertDetail = fmt_to_fragments(
+                        _("Reserve memory at boot time by setting a '$0' option on the kernel command line. For example, append '$1' to $2  in $3 or use your distribution's kernel argument editor."),
+                        <span className="pf-v5-u-font-family-monospace-vf">crashkernel</span>,
+                        <span className="pf-v5-u-font-family-monospace-vf">crashkernel=512M</span>,
+                        <span className="pf-v5-u-font-family-monospace-vf">GRUB_CMDLINE_LINUX</span>,
+                        <span className="pf-v5-u-font-family-monospace-vf">/etc/default/grub</span>
+                    );
+                } else if (this.props.kdumpStatus.state == "failed") {
+                    alertMessage = (
+                        <>
+                            {_("Service has an error")}
+                            <Button variant="link" isInline className="pf-v5-u-ml-sm" onClick={this.handleServiceDetailsClick}>{_("more details")}</Button>
+                        </>
+                    );
+                }
+            } else {
+                alertMessage = _("Kdump service is not installed.");
+                alertDetail = fmt_to_fragments(
+                    _("Install the $0 package."),
+                    <span className="pf-v5-u-font-family-monospace-vf">kexec-tools</span>
+                );
+            }
         }
         return (
             <Page>
@@ -585,25 +582,30 @@ ${enableCrashKernel}
                         </Title>
                         {kdumpSwitch}
                         <HelperText>
-                            <HelperTextItem variant="indeterminate">{serviceRunning ? _("Enabled") : _("Disabled")}</HelperTextItem>
+                            <HelperTextItem variant="indeterminate">{kdumpSwitchHelper}</HelperTextItem>
                         </HelperText>
                         {automationButton}
                     </Flex>
                 </PageSection>
                 <PageSection>
+
+                    {alertMessage &&
+                        <Alert variant='danger'
+                            className="pf-v5-u-mb-md"
+                            isLiveRegion={this.props.isLiveRegion}
+                            isInline
+                            title={alertMessage}>
+                            {alertDetail}
+                        </Alert>
+                    }
                     <Card>
+                        <CardTitle>
+                            <Title headingLevel="h4" size="xl">
+                                {_("Kdump settings")}
+                            </Title>
+                        </CardTitle>
                         <CardBody>
                             <DescriptionList className="pf-m-horizontal-on-sm">
-                                <DescriptionListGroup>
-                                    <DescriptionListTerm>{_("Status")}</DescriptionListTerm>
-                                    <DescriptionListDescription>
-                                        <Flex spaceItems={{ default: 'spaceItemsSm' }} alignItems={{ default: 'alignItemsCenter' }}>
-                                            {serviceWaiting}
-                                            {kdumpServiceDetails}
-                                        </Flex>
-                                    </DescriptionListDescription>
-                                </DescriptionListGroup>
-
                                 <DescriptionListGroup>
                                     <DescriptionListTerm>{_("Reserved memory")}</DescriptionListTerm>
                                     <DescriptionListDescription>
@@ -614,19 +616,17 @@ ${enableCrashKernel}
                                 <DescriptionListGroup>
                                     <DescriptionListTerm>{_("Crash dump location")}</DescriptionListTerm>
                                     <DescriptionListDescription>
-                                        {settingsLink}
+                                        <Flex spaceItems={{ default: 'spaceItemsSm' }}>
+                                            <span id="kdump-target-info">{ kdumpLocation }</span>
+                                            {settingsLink}
+                                        </Flex>
                                     </DescriptionListDescription>
                                 </DescriptionListGroup>
 
                                 <DescriptionListGroup>
                                     <DescriptionListTerm />
                                     <DescriptionListDescription>
-                                        <Flex spaceItems={{ default: 'spaceItemsSm' }} alignItems={{ default: 'alignItemsCenter' }}>
-                                            {testButton}
-                                            <Tooltip id="tip-test-info" content={tooltip_info}>
-                                                <OutlinedQuestionCircleIcon className="popover-ct-kdump" />
-                                            </Tooltip>
-                                        </Flex>
+                                        {testButton}
                                     </DescriptionListDescription>
                                 </DescriptionListGroup>
                             </DescriptionList>
