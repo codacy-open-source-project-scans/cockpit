@@ -1770,8 +1770,10 @@ client.export_mount_point_mapping = () => {
         for (const c of b.Configuration) {
             if (c[0] == "fstab") {
                 const dir = client.strip_mount_point_prefix(utils.decode_filename(c[1].dir.v));
-                if (dir)
-                    mpm[dir] = utils.decode_filename(b.PreferredDevice);
+                const device = utils.decode_filename(b.PreferredDevice);
+                const type = utils.decode_filename(c[1].type.v);
+
+                mpm[device] = { dir, type };
             }
         }
     }

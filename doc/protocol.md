@@ -829,6 +829,133 @@ or pipe is done.
 Additionally, a "options" control message may be sent in this channel
 to change the "max-size" options.
 
+Payload: fsinfo
+----------------
+
+This channel is used to report information about a given path, and the file or
+a directory which may reside there, including the possibility of updates.  In
+the case of directories, information can also be reported about the (directly)
+contained entries.
+
+Additional "open" command options should be specified with a channel of
+this payload type:
+
+ * `path` (mandatory): a string, an absolute path name.  If this ends with `/`
+   then the path must refer to a directory.
+ * `attrs` (mandatory): a list of strings, the requested attributes to be
+   reported for the file at `path`, and (optionally) its sub-items.  See below
+   for the possibilities.
+ * `fnmatch`: (optional, default ''): if non-empty, this is a [`fnmatch`-style
+   pattern](https://docs.python.org/3/library/fnmatch.html).  In case `path`
+   refers to a readable directory, an `entries` attribute will be reported
+   (described below).  Use `*` to report all files.  Can also be used to
+   implement search (`searc*`) or hide temporary files (`[!.]*`).
+ * `watch` (optional, default: false): if the channel should watch for changes
+ * `follow` (default: true): if the trailing component of `path` is a symbolic
+   link, whether we should follow it.  `follow: false` mode is not supported
+   for `watch` (but is also mostly unnecessary).
+
+A channel is created with an associated absolute pathname (`path`).  A path is
+a string that you pass to the `open()` syscall.  The object returned by that
+call is described by the (JSON Document) value of the channel.
+
+Strictly speaking, the path is specified to the channel as a unicode string,
+but paths on the filesystem are binary strings.  This mapping is handled using
+the usual Python convention: filenames are stored in utf8 and encoded and
+decoded with `errors='surrogateescape'`, which allows for handling of filenames
+which are not utf8.
+
+Conceptually, the channel represents the value of a JSON object describing what
+is found at the path, or the reason for an error.  Each message on the channel
+is a JSON Merge Patch ([RFC
+7396](https://datatracker.ietf.org/doc/html/rfc7396)) which updates or replaces
+this object.
+
+The top-level keys in the object are:
+
+ - `info`: the info about the reported path (described below)
+ - `error`: an object with information about why `info` can't be reported.
+   This is currently basically an errno formatted in several possible ways:
+    - `problem`: a Cockpit "problem" code type of string like `not-found` or
+      `not-directory`
+    - `message`: the result of strerror().  Currently English, hopefully
+      translated at some point
+    - `errno`: the symbolic `errno` name like `ENOENT` or `ENOTDIR`
+ - `partial`: `true` if the data is in a "partial" state.  This is used when
+   sending updates in multiple pieces.
+
+The value of the `info` attribute is a JSON object describing the attributes of
+the file.  Any attribute which cannot be read (eg: due to permissions problems)
+is simply not reported.
+
+ * `type`: a string: `reg`, `dir`, `lnk`, `chr`, `blk`, `fifo`, or `sock`
+ * `mode`: an integer representing the "file permission" bits
+   (`S_IMODE(st_mode)`).  As per JSON, this is transmitted as a decimal value,
+   but it is meant to be interpreted in octal, in the usual way.
+ * `uid`: an integer, the uid of the file owner (`st_uid`)
+ * `owner`: a string, or an integer if the lookup failed
+ * `gid`: an integer, the gid of the file group (`st_gid`)
+ * `group`: a string, or an integer if the lookup failed
+ * `size`: an integer, the (apparent) size of the file (`st_size`)
+ * `modified`: a float, the mtime of the file (`st_mtim`)
+ * `tag`: a value type: the current 'transaction tag' of the file, with the
+   same meaning as elsewhere in this document.  Ideally: this changes if the
+   content of the file changes.  This is the same as the tag used in `fsread1`
+   and `fsreplace1`.
+ * `entries`: for directories: the contents of the directory (see below)
+ * `target`: for symbolic links: the target of the link (a string)
+ * `targets`: for directories: extra information about symlink targets for
+   symlinks found in the directory (see below)
+
+The `entries` attribute is reported iff `fnmatch` is non-empty, and `path`
+refers to a readable directory.  It is an object where each key is the name of
+a file in the directory, and each value is an object describing that file,
+using the same attributes as above.  `entries` is not reported on entries (ie:
+no recursive listing).  Listing `entries` in `attrs` is equivalent to
+`fnmatch='*'`.
+
+The `targets` attribute is reported iff `targets` is listed in `attrs`.  It
+contains information that was true at some point in time about the targets of
+symbolic links that were found in the current directory.  An entry is added
+here only in case the entry wouldn't be found in the main `entries` dictionary.
+For example, if `path` is `/usr/lib` and `fnmatch` is `*.so` and the directory
+contains the links `a.so → a-impl.so`, `b.so → b.so.0` and `c.so -> ../x/c.so`
+then the `targets` dictionary would include `b.so.0` (which isn't reported in
+entries because it doesn't match `fnmatch`) and `../x/c.so` (which isn't
+reported because it's in a different directory).  Monitoring these entries for
+changes would be expensive, so it's simply not done.  Clients are expected to
+use this information to flesh out details about directory entries, answering
+questions like "`/bin` links to `usr/bin`, but what type of file is that?".
+`targets` is incompatible with `follow: false`.
+
+If the provided `path` is a symbolic link, it is followed, unless
+`follow: false` is specified.  If symbolic links are present in the directory,
+they are always reported directly (ie: not followed).  `follow: false` is not
+supported in combination with `watch: true` but you probably don't need it:
+watch mode doesn't only watch the final path component, but all components
+leading up to it, including any symlink that have been followed.  That means
+that you can watch `/etc/localtime` and find out about if the link changed, or
+if the contents of the file itself changed, or was deleted or replaced, or also
+if `/usr`, `/etc`, or any other directories or intermediate links were changed,
+deleted, or moved out of the way.
+
+The life-cycle of the channel works like this:
+
+ - When opening the channel, `ready` is always immediately sent.
+
+ - One or more patches are sent to modify the initial value of the channel
+   (`null`).  The "initial state" is reached when the value is a object
+   which does not have the `partial` attribute set on it.
+
+ - If `watch` mode is false then `done` is sent immediately, and the channel is
+   closed.
+
+ - Otherwise (`watch: true`), the channel remains open.  When any changes are
+   detected, they are sent as updates to the value of the channel.  This may
+   involve transitions between reporting `info` and reporting `problem`.
+
+ - The channel will stay open until the client closes it.
+
 Payload: fswatch1
 -----------------
 
@@ -898,6 +1025,9 @@ Returns the contents of a file and its current 'transaction tag'.
 The following options can be specified in the "open" control message:
 
  * "path": The path name of the file to read.
+
+The ready message contains a "size-hint" when the channel is opened
+with the "binary" option set to "raw".
 
 The channel will return the content of the file in one or more
 messages.  As with "stream", the boundaries of the messages are

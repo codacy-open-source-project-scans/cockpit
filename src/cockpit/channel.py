@@ -144,7 +144,7 @@ class Channel(Endpoint):
         except ChannelError as exc:
             self.close(exc.attrs)
 
-    def do_kill(self, host: Optional[str], group: Optional[str]) -> None:
+    def do_kill(self, host: 'str | None', group: 'str | None', _message: JsonObject) -> None:
         # Already closing?  Ignore.
         if self._close_args is not None:
             return
@@ -278,8 +278,8 @@ class Channel(Endpoint):
 
     json_encoder: ClassVar[json.JSONEncoder] = json.JSONEncoder(indent=2)
 
-    def send_json(self, **kwargs: JsonValue) -> bool:
-        pretty = self.json_encoder.encode(create_object(None, kwargs)) + '\n'
+    def send_json(self, _msg: 'JsonObject | None' = None, **kwargs: JsonValue) -> bool:
+        pretty = self.json_encoder.encode(create_object(_msg, kwargs)) + '\n'
         return self.send_data(pretty.encode())
 
     def send_control(self, command: str, **kwargs: JsonValue) -> None:
