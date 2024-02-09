@@ -43,6 +43,7 @@ import { StorageButton, StorageBarMenu, StorageMenuItem, StorageSize } from "./s
 import { MultipathAlert } from "./multipath.jsx";
 import { AnacondaAdvice } from "./anaconda.jsx";
 import { JobsPanel } from "./jobs-panel.jsx";
+import { Truncate } from "../lib/cockpit-components-truncate.jsx";
 
 const _ = cockpit.gettext;
 
@@ -591,7 +592,7 @@ export const PageTable = ({ emptyCaption, aria_label, pages, crossrefs, sorted, 
                     <CardBody>
                         <Split hasGutter>
                             { icon && <SplitItem>{icon}</SplitItem> }
-                            <SplitItem isFilled><strong>{name}</strong>{info}</SplitItem>
+                            <SplitItem isFilled><strong><Truncate content={name} /></strong>{info}</SplitItem>
                             <SplitItem>{actions}</SplitItem>
                         </Split>
                         <Split hasGutter isWrappable>
@@ -603,9 +604,14 @@ export const PageTable = ({ emptyCaption, aria_label, pages, crossrefs, sorted, 
                 </Card>);
         } else {
             const cols = [
-                <Td key="1" onClick={onClick}><span>{name}{info}</span></Td>,
-                <Td key="2" onClick={onClick}>{type}</Td>,
-                <Td key="3" onClick={onClick}>{location}</Td>,
+                <Td key="1" onClick={onClick}>
+                    <div className={"content-level-" + level}>
+                        <Truncate content={name} />
+                        {info}
+                    </div>
+                </Td>,
+                <Td key="2" onClick={onClick} modifier="nowrap">{type}</Td>,
+                <Td key="3" onClick={onClick} modifier="nowrap">{location}</Td>,
                 <Td key="4" onClick={onClick} className="storage-size-column">{size}</Td>,
                 <Td key="5" className="pf-v5-c-table__action">{actions || <div /> }</Td>,
             ];
@@ -614,8 +620,7 @@ export const PageTable = ({ emptyCaption, aria_label, pages, crossrefs, sorted, 
 
             rows.push(
                 <Tr key={key}
-                    className={"content-level-" + level +
-                               (border ? "" : " remove-border") +
+                    className={(border ? "" : " remove-border") +
                                (is_new ? " ct-new-item" : "")}
                     data-test-row-name={page.name} data-test-row-location={page.columns[1]}
                     isClickable={!!page.location}
@@ -637,7 +642,9 @@ export const PageTable = ({ emptyCaption, aria_label, pages, crossrefs, sorted, 
     function sort(things, accessor, sorted) {
         if (sorted === false)
             return things;
-        return things.toSorted((a, b) => page_compare(accessor(a), accessor(b)));
+        // HACK: Use toSorted() once enough users upgrade to at least Firefox ESR 115
+        // See: https://github.com/cockpit-project/cockpit/issues/19848
+        return things.slice().sort((a, b) => page_compare(accessor(a), accessor(b)));
     }
 
     function make_page_rows(pages, level, last_has_border, key, sorted) {
@@ -763,9 +770,33 @@ export function block_location(block) {
     return decode_filename(block.PreferredDevice).replace(/^\/dev\//, "");
 }
 
+const StorageBreadcrumb = ({ page }) => {
+    const parent_crumbs = [];
+    let pp = page.parent;
+    while (pp) {
+        parent_crumbs.unshift(
+            <BreadcrumbItem key={pp.name} to={"#" + cockpit.location.encode(pp.location)}>
+                {page_display_name(pp)}
+            </BreadcrumbItem>
+        );
+        pp = pp.parent;
+    }
+
+    return (
+        <Breadcrumb>
+            { parent_crumbs }
+            <BreadcrumbItem isActive>{page_display_name(page)}</BreadcrumbItem>
+        </Breadcrumb>);
+};
+
 export const StorageCard = ({ card, alert, alerts, actions, children }) => {
     return (
         <Card data-test-card-title={card.title}>
+            { (client.in_anaconda_mode() && card.page.parent && !card.next) &&
+            <CardBody>
+                <StorageBreadcrumb page={card.page} />
+            </CardBody>
+            }
             <CardHeader actions={{ actions: actions || <ActionButtons card={card} /> }}>
                 <CardTitle>{card.title}</CardTitle>
             </CardHeader>
@@ -802,28 +833,14 @@ export const StorageDescription = ({ title, value, action, children }) => {
 export const StoragePage = ({ location, plot_state }) => {
     const page = get_page_from_location(location);
 
-    const parent_crumbs = [];
-    let pp = page.parent;
-    while (pp) {
-        parent_crumbs.unshift(
-            <BreadcrumbItem key={pp.name} to={"#" + cockpit.location.encode(pp.location)}>
-                {page_display_name(pp)}
-            </BreadcrumbItem>
-        );
-        pp = pp.parent;
-    }
-
     return (
         <Page id="storage">
-            { parent_crumbs.length > 0 &&
+            { (!client.in_anaconda_mode() && page.parent) &&
             <PageBreadcrumb stickyOnBreakpoint={{ default: "top" }}>
-                <Breadcrumb>
-                    { parent_crumbs }
-                    <BreadcrumbItem isActive>{page_display_name(page)}</BreadcrumbItem>
-                </Breadcrumb>
+                <StorageBreadcrumb page={page} />
             </PageBreadcrumb>
             }
-            <PageSection isFilled={false}>
+            <PageSection isFilled={false} padding={client.in_anaconda_mode() ? { default: "noPadding" } : {}}>
                 <Stack hasGutter>
                     <MultipathAlert client={client} />
                     <AnacondaAdvice />

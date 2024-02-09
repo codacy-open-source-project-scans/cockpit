@@ -203,6 +203,7 @@ cockpit_web_response_new (GIOStream *io,
                           const gchar *original_path,
                           const gchar *path,
                           GHashTable *in_headers,
+                          const gchar *method,
                           const gchar *protocol)
 {
   CockpitWebResponse *self;
@@ -233,6 +234,7 @@ cockpit_web_response_new (GIOStream *io,
   self->url_root = NULL;
   self->full_path = g_strdup (path);
   self->path = self->full_path;
+  cockpit_web_response_set_method (self, method);
 
   if (path && original_path)
     {
@@ -267,6 +269,7 @@ cockpit_web_response_set_method (CockpitWebResponse *response,
                                  const gchar *method)
 {
   g_return_if_fail (g_strcmp0 (method, "GET") == 0 || g_strcmp0 (method, "HEAD") == 0);
+  g_free (response->method);
   response->method = g_strdup (method);
 }
 
@@ -1089,10 +1092,9 @@ cockpit_web_response_error (CockpitWebResponse *self,
                             ...)
 {
   va_list var_args;
-  gchar *reason = NULL;
-  gchar *escaped = NULL;
+  g_autofree gchar *reason = NULL;
+  g_autofree gchar *escaped = NULL;
   const gchar *message;
-  GList *output, *l;
 
   g_return_if_fail (COCKPIT_IS_WEB_RESPONSE (self));
 
@@ -1147,10 +1149,6 @@ cockpit_web_response_error (CockpitWebResponse *self,
 
   g_debug ("%s: returning error: %u %s", self->logname, code, message);
 
-  extern const char *cockpit_webresponse_fail_html_text;
-  g_autoptr(GBytes) input = g_bytes_new_static (cockpit_webresponse_fail_html_text, strlen (cockpit_webresponse_fail_html_text));
-  output = cockpit_template_expand (input, "@@", "@@", substitute_message, (gpointer) message);
-
   /* If sending arbitrary messages, make sure they're escaped */
   if (reason)
     {
@@ -1170,17 +1168,21 @@ cockpit_web_response_error (CockpitWebResponse *self,
       cockpit_web_response_headers (self, code, message, -1, "Content-Type", "text/html; charset=utf8", NULL);
     }
 
-  for (l = output; l != NULL; l = g_list_next (l))
+  if (g_str_equal (self->method, "GET"))
     {
-      if (!cockpit_web_response_queue (self, l->data))
-        break;
-    }
-  if (l == NULL)
-    cockpit_web_response_complete (self);
-  g_list_free_full (output, (GDestroyNotify)g_bytes_unref);
+      extern const char *cockpit_webresponse_fail_html_text;
+      g_autoptr(GBytes) input = g_bytes_new_static (cockpit_webresponse_fail_html_text, strlen (cockpit_webresponse_fail_html_text));
+      g_autolist(GBytes) output = cockpit_template_expand (input, "@@", "@@", substitute_message, (gpointer) message);
 
-  g_free (reason);
-  g_free (escaped);
+      for (GList *l = output; l != NULL; l = g_list_next (l))
+        {
+          if (!cockpit_web_response_queue (self, l->data))
+            /* error: early exit */
+            return;
+        }
+    }
+
+  cockpit_web_response_complete (self);
 }
 
 /**

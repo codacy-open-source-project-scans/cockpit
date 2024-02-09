@@ -110,7 +110,7 @@ function checked(callback, setSpinning, excuse) {
     };
 }
 
-export const StorageButton = ({ id, kind, excuse, onClick, children, ariaLabel, onlyWide, spinner }) => {
+export const StorageButton = ({ id, kind, excuse, onClick, children, ariaLabel, spinner }) => {
     const [spinning, setSpinning] = useState(false);
 
     return <StorageControl excuse={excuse}
@@ -120,7 +120,6 @@ export const StorageButton = ({ id, kind, excuse, onClick, children, ariaLabel, 
                                        onClick={checked(onClick, setSpinning)}
                                        variant={kind || "secondary"}
                                        isDisabled={!!excuse || (spinner && spinning)}
-                                       className={onlyWide ? "show-only-when-wide" : null}
                                        style={excuse ? { pointerEvents: 'none' } : null}
                                        isLoading={spinner ? spinning : undefined}>
                                    {children}
@@ -226,8 +225,8 @@ export const StorageSize = ({ size }) => {
         </div>);
 };
 
-export const StorageMenuItem = ({ onClick, onlyNarrow, danger, excuse, children }) => (
-    <DropdownItem className={(onlyNarrow ? "show-only-when-narrow" : "") + (danger && !excuse ? " delete-resource-dangerous" : "")}
+export const StorageMenuItem = ({ onClick, danger, excuse, children }) => (
+    <DropdownItem className={danger && !excuse ? " delete-resource-dangerous" : ""}
                   description={excuse}
                   isDisabled={!!excuse}
                   onClick={checked(onClick, null, excuse)}>
@@ -235,7 +234,7 @@ export const StorageMenuItem = ({ onClick, onlyNarrow, danger, excuse, children 
     </DropdownItem>
 );
 
-export const StorageBarMenu = ({ label, isKebab, onlyNarrow, menuItems }) => {
+export const StorageBarMenu = ({ label, isKebab, menuItems }) => {
     const [isOpen, setIsOpen] = useState(false);
 
     if (!client.superuser.allowed)
@@ -259,8 +258,7 @@ export const StorageBarMenu = ({ label, isKebab, onlyNarrow, menuItems }) => {
     </MenuToggle>;
 
     return (
-        <Dropdown className={onlyNarrow ? "show-only-when-narrow" : null}
-                  isOpen={isOpen}
+        <Dropdown isOpen={isOpen}
                   onSelect={onSelect}
                   onOpenChange={isOpen => setIsOpen(isOpen)}
                   toggle={toggle}

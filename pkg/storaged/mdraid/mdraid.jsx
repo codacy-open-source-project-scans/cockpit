@@ -137,19 +137,6 @@ function mdraid_delete(mdraid, block, card) {
     });
 }
 
-function start_stop_action(mdraid) {
-    let running = mdraid.Running;
-    if (running === undefined)
-        running = mdraid.ActiveDevices && mdraid.ActiveDevices.length > 0;
-
-    // "Stop" is only in the card, to discourage stopping.
-
-    if (!running)
-        return { title: _("Start"), action: () => mdraid_start(mdraid), tag: "device" };
-    else
-        return null;
-}
-
 function add_disk(mdraid) {
     function filter_inside_mdraid(spc) {
         let block = spc.block;
@@ -221,7 +208,12 @@ export function make_mdraid_page(parent, mdraid) {
         component: MDRaidCard,
         props: { mdraid, block },
         actions: [
-            start_stop_action(mdraid),
+            (!block &&
+             {
+                 title: _("Start"),
+                 action: () => mdraid_start(mdraid),
+                 tag: "device"
+             }),
             (mdraid.Level != "raid0" &&
              {
                  title: _("Add disk"),
@@ -229,15 +221,13 @@ export function make_mdraid_page(parent, mdraid) {
                  excuse: add_excuse,
                  tag: "disks",
              }),
-        ].concat(
-            (block ? partitionable_block_actions(block, "device") : []).concat(
-                [
-                    {
-                        title: _("Delete"),
-                        action: () => mdraid_delete(mdraid, block, mdraid_card),
-                        danger: true,
-                    },
-                ])),
+            ...(block ? partitionable_block_actions(block, "device") : []),
+            {
+                title: _("Delete"),
+                action: () => mdraid_delete(mdraid, block, mdraid_card),
+                danger: true,
+            },
+        ],
     });
 
     if (!block) {

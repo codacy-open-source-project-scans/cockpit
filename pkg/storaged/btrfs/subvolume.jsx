@@ -23,7 +23,7 @@ import React from "react";
 import { CardBody } from "@patternfly/react-core/dist/esm/components/Card/index.js";
 import { DescriptionList } from "@patternfly/react-core/dist/esm/components/DescriptionList/index.js";
 
-import { StorageCard, StorageDescription, new_card, new_page } from "../pages.jsx";
+import { StorageCard, StorageDescription, new_card, new_page, navigate_away_from_card } from "../pages.jsx";
 import { StorageUsageBar } from "../storage-controls.jsx";
 import {
     encode_filename, get_fstab_config_with_client, reload_systemd, extract_option, parse_options,
@@ -82,7 +82,7 @@ function set_mount_options(subvol, block, vals) {
     if (!mount_now || vals.at_boot == "never") {
         mount_options.push("noauto");
     }
-    if (vals.mount_options.ro)
+    if (vals.mount_options?.ro)
         mount_options.push("ro");
     if (vals.at_boot == "never")
         mount_options.push("x-cockpit-never-auto");
@@ -93,7 +93,7 @@ function set_mount_options(subvol, block, vals) {
 
     const name = (subvol.pathname == "/" ? vals.name : subvol.pathname + "/" + vals.name);
     mount_options.push("subvol=" + name);
-    if (vals.mount_options.extra)
+    if (vals.mount_options?.extra)
         mount_options.push(vals.mount_options.extra);
 
     let mount_point = vals.mount_point;
@@ -126,10 +126,16 @@ function set_mount_options(subvol, block, vals) {
 function subvolume_create(volume, subvol, parent_dir) {
     const block = client.blocks[volume.path];
 
-    const action_variants = [
+    let action_variants = [
         { tag: null, Title: _("Create and mount") },
         { tag: "nomount", Title: _("Create only") }
     ];
+
+    if (client.in_anaconda_mode()) {
+        action_variants = [
+            { tag: "nomount", Title: _("Create") }
+        ];
+    }
 
     dialog_open({
         Title: _("Create subvolume"),
@@ -166,7 +172,7 @@ function subvolume_create(volume, subvol, parent_dir) {
     });
 }
 
-function subvolume_delete(volume, subvol, mount_point_in_parent) {
+function subvolume_delete(volume, subvol, mount_point_in_parent, card) {
     const block = client.blocks[volume.path];
     const subvols = client.uuids_btrfs_subvols[volume.data.uuid];
 
@@ -225,6 +231,7 @@ function subvolume_delete(volume, subvol, mount_point_in_parent) {
                 await cockpit.spawn(["btrfs", "subvolume", "delete"].concat(paths_to_delete),
                                     { superuser: true, err: "message" });
                 await btrfs_poll();
+                navigate_away_from_card(card);
             }
         },
         Inits: [
@@ -288,7 +295,7 @@ export function make_btrfs_subvolume_page(parent, volume, subvol) {
             danger: true,
             title: _("Delete"),
             excuse: delete_excuse,
-            action: () => subvolume_delete(volume, subvol, mount_point_in_parent),
+            action: () => subvolume_delete(volume, subvol, mount_point_in_parent, card),
         });
 
     const card = new_card({
