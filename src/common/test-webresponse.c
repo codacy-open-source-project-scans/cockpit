@@ -48,6 +48,7 @@ typedef struct {
     const gchar *path;
     const gchar *header;
     const gchar *value;
+    const gchar *method;
     const gchar *expected_content_type;
     CockpitCacheType cache;
     gboolean for_tls_proxy;
@@ -88,7 +89,8 @@ setup (TestCase *tc,
       g_hash_table_insert (headers, g_strdup (fixture->header), g_strdup (fixture->value));
     }
 
-  tc->response = cockpit_web_response_new (io, path, path, headers, "GET",
+  tc->response = cockpit_web_response_new (io, path, path, headers,
+                                           (fixture && fixture->method) ? fixture->method : "GET",
                                            (fixture && fixture->for_tls_proxy) ? "https" : "http");
 
   if (headers)
@@ -167,8 +169,6 @@ test_return_error (TestCase *tc,
 {
   const gchar *resp;
 
-  cockpit_expect_message ("Returning error-response 500*");
-
   cockpit_web_response_error (tc->response, 500, NULL, "Reason here: %s", "booyah");
 
   resp = output_as_string (tc);
@@ -192,8 +192,6 @@ test_return_error_headers (TestCase *tc,
   const gchar *resp;
   GHashTable *headers;
 
-  cockpit_expect_message ("Returning error-response 500*");
-
   headers = cockpit_web_server_new_table ();
   g_hash_table_insert (headers, g_strdup ("Header1"), g_strdup ("value1"));
 
@@ -214,8 +212,6 @@ test_return_gerror_headers (TestCase *tc,
   const gchar *resp;
   GHashTable *headers;
   GError *error;
-
-  cockpit_expect_message ("Returning error-response 500*");
 
   headers = cockpit_web_server_new_table ();
   g_hash_table_insert (headers, g_strdup ("Header1"), g_strdup ("value1"));
@@ -343,6 +339,14 @@ static const TestFixture content_type_fixture_png = {
 static const TestFixture content_type_fixture_wasm = {
   .path = "/src/common/mock-content/test.wasm",
   .expected_content_type = "application/wasm",
+};
+
+static const TestFixture fixture_head = {
+  .method = "HEAD",
+};
+
+static const TestFixture fixture_unsupported_method = {
+  .method = "PATCH",
 };
 
 static void
@@ -581,8 +585,6 @@ test_head (TestCase *tc,
   const gchar *resp;
   GBytes *content;
 
-  cockpit_web_response_set_method (tc->response, "HEAD");
-
   g_assert_cmpint (cockpit_web_response_get_state (tc->response), ==, COCKPIT_WEB_RESPONSE_READY);
 
   cockpit_web_response_headers (tc->response, 200, "OK", 19, NULL);
@@ -605,6 +607,18 @@ test_head (TestCase *tc,
   g_assert_cmpint (cockpit_web_response_get_state (tc->response), ==, COCKPIT_WEB_RESPONSE_SENT);
 
   g_assert_cmpstr (resp, ==, "HTTP/1.1 200 OK\r\nContent-Length: 19\r\n" STATIC_HEADERS);
+}
+
+static void
+test_unsupported_method (TestCase *tc,
+                         gconstpointer data)
+{
+  cockpit_web_response_error (tc->response, 405, NULL, "Unsupported method");
+
+  const gchar *resp = output_as_string (tc);
+  g_assert (g_str_has_prefix (resp, "HTTP/1.1 405 Unsupported method\r\n"));
+  /* not a HEAD request, thus has body */
+  g_assert (strstr (resp, "<body>"));
 }
 
 static void
@@ -1476,8 +1490,10 @@ main (int argc,
               setup, test_stream, teardown);
   g_test_add ("/web-response/pressure", TestCase, NULL,
               setup, test_pressure, teardown);
-  g_test_add ("/web-response/head", TestCase, NULL,
+  g_test_add ("/web-response/head", TestCase, &fixture_head,
               setup, test_head, teardown);
+  g_test_add ("/web-response/unsupported-method", TestCase, &fixture_unsupported_method,
+              setup, test_unsupported_method, teardown);
   g_test_add ("/web-response/chunked-transfer-encoding", TestCase, NULL,
               setup, test_chunked_transfer_encoding, teardown);
   g_test_add ("/web-response/chunked-zero-length", TestCase, NULL,

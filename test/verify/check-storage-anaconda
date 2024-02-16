@@ -28,18 +28,19 @@ class TestStorageAnaconda(storagelib.StorageCase):
 
     def enterAnacondaMode(self, config):
         b = self.browser
-        b.call_js_func("window.localStorage.setItem", "cockpit_anaconda", json.dumps(config))
+        b.call_js_func("window.sessionStorage.setItem", "cockpit_anaconda", json.dumps(config))
         b.reload()
         b.enter_page("/storage")
 
-    def expectExportedMountPoint(self, expected):
-        mpm = json.loads(self.browser.call_js_func("window.localStorage.getItem", "cockpit_mount_points"))
-        self.assertIn(expected, mpm.values())
-
     def expectExportedDevice(self, device, value):
-        mpm = json.loads(self.browser.call_js_func("window.localStorage.getItem", "cockpit_mount_points"))
+        mpm = json.loads(self.browser.call_js_func("window.sessionStorage.getItem", "cockpit_mount_points"))
         self.assertIn(device, mpm)
         self.assertEqual(mpm[device], value)
+
+    def expectExportedDevicePassphrase(self, device, value):
+        pp = json.loads(self.browser.call_js_func("window.sessionStorage.getItem", "cockpit_passphrases"))
+        self.assertIn(device, pp)
+        self.assertEqual(pp[device], value)
 
     def testBasic(self):
         m = self.machine
@@ -88,11 +89,8 @@ class TestStorageAnaconda(storagelib.StorageCase):
 
         b.assert_pixels("body", "page")
 
-        # Mount/Unmount the filesystem, edit mount point
-        self.click_card_row("Storage", location="/")
-        b.wait_visible(self.card("Encryption"))
-        b.wait_in_text(self.card_desc("Filesystem", "Mount point"), "/")
-        b.click(self.card_desc("Filesystem", "Mount point") + " button")
+        # Edit mount point
+        self.click_dropdown(self.card_row("Storage", name="lvol0"), "Edit mount point")
         self.dialog_wait_open()
         self.dialog_wait_val("mount_point", "/")
         # Empty mount point should be failure
@@ -103,6 +101,11 @@ class TestStorageAnaconda(storagelib.StorageCase):
         self.dialog_apply()
         self.dialog_wait_close()
         self.assertIn("noauto", m.execute("findmnt --fstab -n -o OPTIONS /sysroot/var"))
+
+        # Mount/Unmount the filesystem
+        self.click_card_row("Storage", location="/var")
+        b.wait_visible(self.card("Encryption"))
+        b.wait_in_text(self.card_desc("Filesystem", "Mount point"), "/var")
 
         b.click(self.card_button("Filesystem", "Mount"))
         self.dialog_wait_open()
@@ -119,17 +122,24 @@ class TestStorageAnaconda(storagelib.StorageCase):
         self.dialog_wait_close()
         self.assertIn("noauto", m.execute("findmnt --fstab -n -o OPTIONS /sysroot/var"))
 
-        # Check exported mount point information.
+        # Deactivate
+        b.click(self.card_button("LVM2 logical volume", "Deactivate"))
+        self.confirm()
+        testlib.wait(lambda: m.execute("if ! test -e /dev/vgroup0/lvol0; then echo gone; fi").strip() == "gone")
 
-        self.expectExportedMountPoint({
-            "type": "crypto",
-            "content": {
-                "type": "filesystem",
-                "dir": "/var"
-            }
-        })
+        # Check exported information.
+        self.expectExportedDevicePassphrase("/dev/vgroup0/lvol0", "vainu-reku-toma-rolle-kaja")
+        self.expectExportedDevice("/dev/vgroup0/lvol0",
+                                  {
+                                      "type": "crypto",
+                                      "content": {
+                                          "type": "filesystem",
+                                          "dir": "/var"
+                                      }
+                                  })
 
-        # Mount again, to check location in tear down information
+        # Activate and mount again, to check location in tear down information
+        b.click(self.card_button("Inactive logical volume", "Activate"))
         b.click(self.card_button("Filesystem", "Mount"))
         self.dialog_wait_open()
         self.dialog_set_val("passphrase", "vainu-reku-toma-rolle-kaja")
@@ -192,10 +202,8 @@ class TestStorageAnaconda(storagelib.StorageCase):
 
         b.wait_visible(self.card_row_col("Storage", 3, 5) + " .usage-bar[role=progressbar]")
 
-        # Mount/Unmount the filesystem, edit mount point
-        self.click_card_row("Storage", location="/")
-        b.wait_in_text(self.card_desc("Stratis filesystem", "Mount point"), "/")
-        b.click(self.card_desc("Stratis filesystem", "Mount point") + " button")
+        # Edit mount point
+        self.click_dropdown(self.card_row("Storage", name="root"), "Edit mount point")
         self.dialog_wait_open()
         self.dialog_wait_val("mount_point", "/")
         self.dialog_set_val("mount_point", "/var")
@@ -203,6 +211,9 @@ class TestStorageAnaconda(storagelib.StorageCase):
         self.dialog_wait_close()
         self.assertIn("noauto", m.execute("findmnt --fstab -n -o OPTIONS /sysroot/var"))
 
+        # Mount/Unmount the filesystem
+        self.click_card_row("Storage", location="/var")
+        b.wait_in_text(self.card_desc("Stratis filesystem", "Mount point"), "/var")
         b.click(self.card_button("Stratis filesystem", "Mount"))
         self.dialog_wait_open()
         self.dialog_wait_val("mount_point", "/var")
@@ -219,10 +230,11 @@ class TestStorageAnaconda(storagelib.StorageCase):
 
         # Check exported mount point information.
 
-        self.expectExportedMountPoint({
-            "type": "filesystem",
-            "dir": "/var"
-        })
+        self.expectExportedDevice("/dev/stratis/pool0/root",
+                                  {
+                                      "type": "filesystem",
+                                      "dir": "/var"
+                                  })
 
         # Mount again, to check location in tear down information
         b.click(self.card_button("Stratis filesystem", "Mount"))
@@ -301,23 +313,24 @@ class TestStorageAnaconda(storagelib.StorageCase):
         self.click_dropdown(self.card_row("Storage", name=disk), "Lock")
         b.wait_text(self.card_row_col("Storage", 1, 3), "Locked data (encrypted)")
 
-        self.expectExportedMountPoint({
-            "type": "crypto",
-            "content": {
-                "type": "filesystem",
-                "subvolumes": {
-                    "/": {
-                        "dir": "/mnt/butter"
-                    },
-                    "root": {
-                        "dir": "/"
-                    },
-                    "home": {
-                        "dir": "/home"
-                    },
-                }
-            }
-        })
+        self.expectExportedDevice(disk,
+                                  {
+                                      "type": "crypto",
+                                      "content": {
+                                          "type": "filesystem",
+                                          "subvolumes": {
+                                              "/": {
+                                                  "dir": "/mnt/butter"
+                                              },
+                                              "root": {
+                                                  "dir": "/"
+                                              },
+                                              "home": {
+                                                  "dir": "/home"
+                                              },
+                                          }
+                                      }
+                                  })
 
     def testBiosboot(self):
         b = self.browser
@@ -342,7 +355,7 @@ class TestStorageAnaconda(storagelib.StorageCase):
         self.dialog({"type": "biosboot"})
 
         # Check the type and set it to something else
-        b.wait_text(self.card_row_col("Storage", 2, 3), "Unformatted data")
+        b.wait_text(self.card_row_col("Storage", 2, 3), "Unformatted data (BIOS boot partition)")
         self.click_card_row("Storage", 2)
         b.wait_text(self.card_desc("Partition", "Type"), "BIOS boot partition")
         b.click(self.card_desc_action("Partition", "Type"))
@@ -377,7 +390,7 @@ class TestStorageAnaconda(storagelib.StorageCase):
         self.dialog({"type": "efi"})
 
         # Check the type and set it to something else
-        b.wait_text(self.card_row_col("Storage", 2, 3), "vfat filesystem")
+        b.wait_text(self.card_row_col("Storage", 2, 3), "vfat filesystem (EFI system partition)")
         b.wait_text(self.card_row_col("Storage", 2, 4), "/boot/efi")
         self.click_card_row("Storage", 2)
         b.wait_visible(self.card("vfat filesystem"))
