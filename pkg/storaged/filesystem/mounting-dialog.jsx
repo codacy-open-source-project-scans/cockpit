@@ -195,7 +195,7 @@ export function mounting_dialog(client, block, mode, forced_options, subvol) {
         }
 
         function maybe_lock() {
-            if (mode == "unmount" && !subvol) {
+            if (mode == "unmount" && !subvol && !client.in_anaconda_mode()) {
                 const crypto_backing = client.blocks[block.CryptoBackingDevice];
                 const crypto_backing_crypto = crypto_backing && client.blocks_crypto[crypto_backing.path];
                 if (crypto_backing_crypto) {
@@ -250,7 +250,7 @@ export function mounting_dialog(client, block, mode, forced_options, subvol) {
                                                                 block,
                                                                 client.add_mount_point_prefix(val),
                                                                 mode == "update" && !is_filesystem_mounted,
-                                                                true,
+                                                                mode == "update",
                                                                 subvol)
                       }),
             mount_options(opt_ro, extra_options),
