@@ -24,7 +24,7 @@ import { EmptyStateActions, EmptyState, EmptyStateBody, EmptyStateFooter, EmptyS
 import { Spinner } from "@patternfly/react-core/dist/esm/components/Spinner/index.js";
 import "./cockpit-components-empty-state.css";
 
-export const EmptyStatePanel = ({ title, paragraph, loading, icon, action, isActionInProgress, onAction, secondary, headingLevel, titleSize }) => {
+export const EmptyStatePanel = ({ title, paragraph, loading, icon, action, isActionInProgress, onAction, secondary, headingLevel }) => {
     const slimType = title || paragraph ? "" : "slim";
     return (
         <EmptyState variant={EmptyStateVariant.full}>
@@ -47,7 +47,7 @@ export const EmptyStatePanel = ({ title, paragraph, loading, icon, action, isAct
 
 EmptyStatePanel.propTypes = {
     loading: PropTypes.bool,
-    icon: PropTypes.oneOfType([PropTypes.string, PropTypes.func]),
+    icon: PropTypes.oneOfType([PropTypes.string, PropTypes.object, PropTypes.func]),
     title: PropTypes.string,
     paragraph: PropTypes.node,
     action: PropTypes.node,
@@ -58,6 +58,5 @@ EmptyStatePanel.propTypes = {
 
 EmptyStatePanel.defaultProps = {
     headingLevel: "h1",
-    titleSize: "lg",
     isActionInProgress: false,
 };

@@ -23,6 +23,8 @@ import 'cockpit-dark-theme'; // once per page
 import React, { useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import { debounce } from 'throttle-debounce';
+
 import cockpit from 'cockpit';
 import { superuser } from "superuser";
 import { usePageLocation, useLoggedInUser, useFile, useInit } from "hooks.js";
@@ -68,13 +70,17 @@ function AccountsPage() {
     const [details, setDetails] = useState(null);
 
     useInit(() => {
+        const debouncedGetLogins = debounce(100, () => {
+            getLogins().then(setDetails);
+        });
+
         // Watch `/var/run/utmp` to register when user logs in or out
         const handleUtmp = cockpit.file("/var/run/utmp", { superuser: "try", binary: true });
-        handleUtmp.watch(() => getLogins().then(setDetails), { read: false });
+        handleUtmp.watch(() => debouncedGetLogins(), { read: false });
 
         // Watch /etc/shadow to register lock/unlock/expire changes; but avoid reading it, it's sensitive data
         const handleShadow = cockpit.file("/etc/shadow", { superuser: "try" });
-        handleShadow.watch(() => getLogins().then(setDetails), { read: false });
+        handleShadow.watch(() => debouncedGetLogins(), { read: false });
 
         const handleLogindef = cockpit.file("/etc/login.defs", { superuser: true });
         handleLogindef.watch((logindef) => {
@@ -99,11 +105,14 @@ function AccountsPage() {
         return [handleUtmp, handleShadow, handleLogindef];
     }, [], null, handles => handles.forEach(handle => handle.close()));
 
-    // lastlog uses same sorting as /etc/passwd therefore arrays can be combined based on index
     const accountsInfo = useMemo(() => {
         if (accounts && details)
-            return accounts.map((account, i) => {
-                return Object.assign({}, account, details[i]);
+            return accounts.map((account) => {
+                const detail = details.find(detail => detail.name === account.name);
+                if (detail)
+                    return Object.assign({}, account, detail);
+
+                return account;
             });
         else
             return [];
@@ -186,7 +195,7 @@ async function getLogins() {
 
     // drop header and last empty line with slice
     const promises = lastlog.split('\n').slice(1, -1).map(async line => {
-        const splitLine = line.split(/[ \t]+/);
+        const splitLine = line.trim().split(/[ \t]+/);
         const name = splitLine[0];
         // Fallback on passwd -S for Fedora and RHEL
         const isLocked = locked_users_map[name] ?? await get_locked(name);
