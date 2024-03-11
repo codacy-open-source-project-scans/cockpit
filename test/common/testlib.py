@@ -52,7 +52,7 @@ BASE_DIR = os.path.realpath(f'{__file__}/../../..')
 TEST_DIR = f'{BASE_DIR}/test'
 BOTS_DIR = f'{BASE_DIR}/bots'
 
-os.environ["PATH"] = "{0}:{1}:{2}".format(os.environ.get("PATH"), BOTS_DIR, TEST_DIR)
+os.environ["PATH"] = f"{os.environ.get('PATH')}:{BOTS_DIR}:{TEST_DIR}"
 
 # Be careful when changing this string, check in cockpit-project/bots where it is being used
 UNEXPECTED_MESSAGE = "FAIL: Test completed, but found unexpected "
@@ -1002,6 +1002,11 @@ class Browser:
     def set_layout(self, name: str):
         layout = next(lo for lo in self.layouts if lo["name"] == name)
         if layout != self.current_layout:
+            if layout["name"] == "rtl":
+                self._set_direction("rtl")
+            elif layout["name"] != "rtl" and self.current_layout and self.current_layout["name"] == "rtl":
+                self._set_direction("ltr")
+
             self.current_layout = layout
             size = layout["shell_size"]
             self._set_window_size(size[0], size[1])
@@ -1216,8 +1221,6 @@ class Browser:
             for layout in self.layouts:
                 if layout["name"] not in skip_layouts:
                     self.set_layout(layout["name"])
-                    if "rtl" in self.current_layout["name"]:
-                        self._set_direction("rtl")
                     if wait_after_layout_change:
                         time.sleep(wait_delay)
                     self.assert_pixels_in_current_layout(selector, key, ignore=ignore,
@@ -1226,8 +1229,6 @@ class Browser:
                                                          wait_animations=wait_animations,
                                                          wait_delay=wait_delay)
 
-                    if "rtl" in self.current_layout["name"]:
-                        self._set_direction("ltr")
             self.set_layout(previous_layout)
 
     def assert_no_unused_pixel_test_references(self):
@@ -1523,7 +1524,11 @@ class MachineCase(unittest.TestCase):
         self.addCleanup(m.execute, "find /var/lib/systemd/coredump -type f -delete")
 
         # temporary directory in the VM
-        self.addCleanup(m.execute, "if [ -d {0} ]; then findmnt --list --noheadings --output TARGET | grep ^{0} | xargs -r umount; rm -r {0}; fi".format(self.vm_tmpdir))
+        self.addCleanup(m.execute, f"""
+            if [ -d {self.vm_tmpdir} ]; then
+                findmnt --list --noheadings --output TARGET | grep ^{self.vm_tmpdir} | xargs -r umount
+                rm -r {self.vm_tmpdir}
+            fi""")
 
         # users/groups/home dirs
         self.restore_file("/etc/passwd")
@@ -2371,13 +2376,16 @@ class TapRunner:
 
         # Return 77 if all tests were skipped
         if len(skips) == test_count:
-            sys.stdout.write("# SKIP {0}\n".format(", ".join([f"{s[0]!s} {s[1]}" for s in skips])))
+            skips = ", ".join([f"{s[0]!s} {s[1]}" for s in skips])
+            sys.stdout.write(f"# SKIP {skips}\n")
             return 77
         if failures:
-            sys.stdout.write("# {0} TEST{1} FAILED {2}\n".format(failures, "S" if failures > 1 else "", details))
+            plural = "S" if failures > 1 else ""
+            sys.stdout.write(f"# {failures} TEST{plural} FAILED {details}\n")
             return 1
         else:
-            sys.stdout.write("# {0} TEST{1} PASSED {2}\n".format(test_count, "S" if test_count > 1 else "", details))
+            plural = "S" if test_count > 1 else ""
+            sys.stdout.write(f"# {test_count} TEST{plural} PASSED {details}\n")
             return 0
 
 
