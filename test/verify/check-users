@@ -35,7 +35,6 @@ def getUserAddDetails(machine):
 
 
 def performUserAction(browser, user, action):
-    browser.wait_visible(f"#accounts-list tbody tr:contains({user}) button.pf-v5-c-menu-toggle")
     browser.click(f"#accounts-list tbody tr:contains({user}) button.pf-v5-c-menu-toggle")
     browser.wait_visible(f"#accounts-list tbody tr:contains({user}) button.pf-v5-c-menu-toggle[aria-expanded=true]")
     browser.click(f".pf-v5-c-menu__list-item:contains({action}) button")
@@ -64,7 +63,6 @@ def createUser(
 ):
     if default_shell is None:
         default_shell = getUserAddDetails(machine)["SHELL"] or "/bin/bash"
-    browser.wait_visible('#accounts-create')
     browser.click('#accounts-create')
     browser.wait_visible('#accounts-create-dialog')
     if run_assert_pixels:
@@ -428,10 +426,8 @@ class TestAccounts(testlib.MachineCase):
         b.set_input_text('#accounts-create-password-pw2', "bar")
         b.wait_not_present("#accounts-create-password-pw2-helper")
         b.set_input_text('#accounts-create-password-pw2', "foobarfoo")
-        b.wait_visible("#accounts-create-password-pw2-helper")
         b.wait_in_text("#accounts-create-password-pw2-helper", "The passwords do not match")
         b.set_input_text('#accounts-create-password-pw2', "bar")
-        b.wait_visible("#accounts-create-password-pw2-helper")
         b.wait_in_text("#accounts-create-password-pw2-helper", "The passwords do not match")
         b.set_input_text('#accounts-create-password-pw2', "foobar")
         b.wait_not_present("#accounts-create-password-pw2-helper")
@@ -455,13 +451,10 @@ class TestAccounts(testlib.MachineCase):
         b.set_input_text('#accounts-create-password-pw2', "bar")
         b.wait_not_present("#accounts-create-password-pw2-helper")
         b.click('#accounts-create-dialog button.apply')
-        b.wait_visible("#accounts-create-password-pw2-helper")
         b.wait_in_text("#accounts-create-password-pw2-helper", "The passwords do not match")
         b.set_input_text('#accounts-create-password-pw2', "barfoo")
-        b.wait_visible("#accounts-create-password-pw2-helper")
         b.wait_in_text("#accounts-create-password-pw2-helper", "The passwords do not match")
         b.set_input_text('#accounts-create-password-pw2', "foobarfoo")
-        b.wait_visible("#accounts-create-password-pw2-helper")
         b.wait_in_text("#accounts-create-password-pw2-helper", "The passwords do not match")
         b.set_input_text('#accounts-create-password-pw2', "foobar")
         b.wait_not_present("#accounts-create-password-pw2-helper")
@@ -1139,7 +1132,6 @@ class TestAccounts(testlib.MachineCase):
         b.wait_text("#group-confirm-delete-dialog footer .pf-v5-c-button.apply", "Delete")
         b.click("#group-confirm-delete-dialog footer .pf-v5-c-button.apply")
         b.wait_not_present('#group-confirm-delete-dialog')
-        b.wait_visible("#groups-list")
         b.wait_not_in_text('#groups-list', "testgroup0")
 
         # Add testgroup0 back
@@ -1152,7 +1144,6 @@ class TestAccounts(testlib.MachineCase):
         b.click("#group-confirm-delete-dialog footer .pf-v5-c-button.apply")
         b.wait_not_present('#account-confirm-delete-dialog')
         b.wait(lambda: "#/" == b.eval_js('window.location.hash'))
-        b.wait_visible("#groups-list")
         b.wait_not_in_text('#groups-list', "anton")
 
         b.click('#accounts-list td[data-label="Username"] a[href="#/admin"]')
