@@ -33,7 +33,7 @@ import {
     flatten, teardown_active_usage,
 } from "../utils.js";
 import { btrfs_usage, validate_subvolume_name, parse_subvol_from_options } from "./utils.jsx";
-import { at_boot_input, mounting_dialog, mount_options } from "../filesystem/mounting-dialog.jsx";
+import { at_boot_input, update_at_boot_input, mounting_dialog, mount_options } from "../filesystem/mounting-dialog.jsx";
 import {
     dialog_open, TextInput,
     TeardownMessage, init_active_usage_processes,
@@ -159,8 +159,9 @@ function subvolume_create(volume, subvol, parent_dir) {
                           }
                       }),
             mount_options(false, false),
-            at_boot_input("local"),
+            at_boot_input(),
         ],
+        update: update_at_boot_input,
         Action: {
             Variants: action_variants,
             action: async function (vals) {
@@ -386,7 +387,7 @@ function make_btrfs_subvolume_page(parent, volume, subvol, path_prefix, subvols)
         next: null,
         page_location: ["btrfs", volume.data.uuid, subvol.pathname],
         page_name: strip_prefix(subvol.pathname, path_prefix),
-        page_size: is_mounted && <StorageUsageBar stats={use} short />,
+        page_size: mounted && <StorageUsageBar stats={use} short />,
         location: mp_text,
         component: BtrfsSubvolumeCard,
         has_warning: !!mismount_warning,
