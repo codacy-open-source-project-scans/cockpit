@@ -18,7 +18,8 @@
 import asyncio
 import json
 import logging
-from typing import BinaryIO, ClassVar, Dict, Generator, List, Optional, Sequence, Set, Tuple, Type
+import traceback
+from typing import BinaryIO, ClassVar, Dict, Generator, List, Mapping, Optional, Sequence, Set, Tuple, Type
 
 from .jsonutil import JsonError, JsonObject, JsonValue, create_object, get_bool, get_str
 from .protocol import CockpitProblem
@@ -142,7 +143,7 @@ class Channel(Endpoint):
             except JsonError as exc:
                 raise ChannelError('protocol-error', message=str(exc)) from exc
         except ChannelError as exc:
-            self.close(exc.attrs)
+            self.close(exc.get_attrs())
 
     def do_kill(self, host: 'str | None', group: 'str | None', _message: JsonObject) -> None:
         # Already closing?  Ignore.
@@ -185,7 +186,7 @@ class Channel(Endpoint):
         try:
             self.do_data(data)
         except ChannelError as exc:
-            self.close(exc.attrs)
+            self.close(exc.get_attrs())
 
     def do_data(self, _data: bytes) -> None:
         # By default, channels can't receive data.
@@ -333,7 +334,7 @@ class ProtocolChannel(Channel, asyncio.Protocol):
         try:
             transport = task.result()
         except ChannelError as exc:
-            self.close(exc.attrs)
+            self.close(exc.get_attrs())
             return
 
         self.connection_made(transport)
@@ -423,7 +424,7 @@ class AsyncChannel(Channel):
     entire contents of a binary-mode file-like object.
 
     The subclass must provide an async `run()` function, which will be spawned
-    as a task.
+    as a task.  The task is cancelled when the channel is closed.
 
     On the receiving side, the channel will respond to flow control pings to
     indicate that it has received the data, but only after it has been consumed
@@ -433,31 +434,44 @@ class AsyncChannel(Channel):
     """
 
     # Receive-side flow control: intermix pings and data in the queue and reply
-    # to pings as we dequeue them.  This is a buffer: since we need to handle
-    # do_data() without blocking, we have no choice.
-    receive_queue = None
+    # to pings as we dequeue them.  EOF is None.  This is a buffer: since we
+    # need to handle do_data() without blocking, we have no choice.
+    receive_queue: 'asyncio.Queue[bytes | JsonObject | None]'
 
     # Send-side flow control
     write_waiter = None
 
-    async def run(self, options):
+    async def run(self, options: JsonObject) -> None:
         raise NotImplementedError
 
-    async def run_wrapper(self, options):
+    async def run_wrapper(self, options: JsonObject) -> None:
         try:
             await self.run(options)
+        except asyncio.CancelledError:  # user requested close
             self.close()
         except ChannelError as exc:
-            self.close(exc.attrs)
+            self.close(exc.get_attrs())
+        except BaseException:
+            self.close({'problem': 'internal-error', 'cause': traceback.format_exc()})
+            raise
+        else:
+            self.close()
 
-    async def read(self):
+    async def read(self) -> 'bytes | None':
+        # Three possibilities for what we'll find:
+        #  - None (EOF) → return b''
+        #  - a ping → send a pong
+        #  - bytes → return it
         while True:
             item = await self.receive_queue.get()
-            if isinstance(item, bytes):
+            if item is None:
+                return None
+            if isinstance(item, Mapping):
+                self.send_pong(item)
+            else:
                 return item
-            self.send_pong(item)
 
-    async def write(self, data):
+    async def write(self, data: bytes) -> None:
         if not self.send_data(data):
             self.write_waiter = asyncio.get_running_loop().create_future()
             await self.write_waiter
@@ -478,21 +492,21 @@ class AsyncChannel(Channel):
             self.write_waiter.set_result(None)
             self.write_waiter = None
 
-    def do_open(self, options):
+    def do_open(self, options: JsonObject) -> None:
         self.receive_queue = asyncio.Queue()
-        self.create_task(self.run_wrapper(options), name=f'{self.__class__.__name__}.run_wrapper({options})')
+        self._run_task = self.create_task(self.run_wrapper(options),
+                                          name=f'{self.__class__.__name__}.run_wrapper({options})')
 
-    def do_done(self):
-        self.receive_queue.put_nowait(b'')
+    def do_done(self) -> None:
+        self.receive_queue.put_nowait(None)
 
-    def do_close(self):
-        # we might have already sent EOF for done, but two EOFs won't hurt anyone
-        self.receive_queue.put_nowait(b'')
+    def do_close(self) -> None:
+        self._run_task.cancel()
 
-    def do_ping(self, message):
+    def do_ping(self, message: JsonObject) -> None:
         self.receive_queue.put_nowait(message)
 
-    def do_data(self, data):
+    def do_data(self, data: bytes) -> None:
         if not isinstance(data, bytes):
             # this will persist past this callback, so make sure we take our
             # own copy, in case this was a memoryview into a bytearray.

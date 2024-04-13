@@ -29,31 +29,22 @@ import testlib
 
 WAIT_KRB_SCRIPT = """
 set -ex
-# HACK: This needs to work, but may take a minute
-for x in $(seq 1 60); do
-    if getent passwd {0}; then
-        break
+# Configuring kerberos in sssd takes some time
+for _retry in $(seq 5); do
+    if getent passwd {0} &&
+       ssh -oStrictHostKeyChecking=no -oBatchMode=yes -l {0} x0.cockpit.lan true; then
+        exit 0
     fi
     if systemctl --quiet is-failed sssd.service; then
         systemctl status --lines=100 sssd.service >&2
         exit 1
     fi
     sss_cache -E || true
+    systemctl reset-failed sssd.service
     systemctl restart sssd.service
-    sleep $x
+    sleep 10
 done
-# ensure this works now, if the above loop timed out
-getent passwd {0}
-
-# HACK: This needs to work but may take a minute
-for x in $(seq 1 60); do
-    if ssh -oStrictHostKeyChecking=no -oBatchMode=yes -l {0} x0.cockpit.lan true; then
-        break
-    fi
-    sss_cache -E || true
-    systemctl restart sssd.service
-    sleep $x
-done
+exit 1
 """
 
 # https://en.wikipedia.org/wiki/HMAC-based_One-time_Password_algorithm
@@ -556,6 +547,9 @@ class TestIPA(TestRealms, CommonTests):
 
         # validate Kerberos setup for ws
         m.execute(f"echo {self.admin_password} | kinit -f {self.admin_user}@COCKPIT.LAN")
+        # HACK: https://launchpad.net/bugs/2061055
+        if m.image == 'ubuntu-stable':
+            m.execute(self.restart_sshd)
         m.execute(WAIT_KRB_SCRIPT.format(f"{self.admin_user}@cockpit.lan"), timeout=300)
 
         # kerberos login should work
@@ -747,7 +741,7 @@ ipa-advise enable-admins-sudo | sh -ex
 
         # enable ssh GSSAPI authentication
         m.execute("sed -ri 's/#GSSAPIAuthentication.*/GSSAPIAuthentication yes/' /etc/ssh/sshd_config")
-        m.execute("systemctl restart sshd")
+        m.execute(self.restart_sshd)
 
         # avoid "unknown host" error in SSH
         m.execute("su -c 'mkdir -p ~/.ssh; ssh-keyscan localhost > ~/.ssh/known_hosts' alice")
@@ -1025,6 +1019,9 @@ class TestKerberos(testlib.MachineCase):
             # no nss-myhostname there
             self.machine.execute("echo '10.111.113.1 x0.cockpit.lan' >> /etc/hosts")
         self.machine.execute(JOIN_SCRIPT % args, timeout=1800)
+        # HACK: https://launchpad.net/bugs/2061055
+        if self.machine.image == 'ubuntu-stable':
+            self.machine.execute(self.restart_sshd)
         self.machine.execute(WAIT_KRB_SCRIPT.format("admin"), timeout=300)
 
     @testlib.skipBrowser("Firefox cannot work with cookies", "firefox")
