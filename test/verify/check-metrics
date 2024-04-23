@@ -9,7 +9,7 @@ import time
 import packagelib
 import testlib
 from lib.constants import TEST_OS_DEFAULT
-from machine_core import ssh_connection
+from machine.machine_core import ssh_connection
 
 
 def getMaximumSpike(test, g_type, saturation, hour, minute):
@@ -32,7 +32,7 @@ def getCompressedMinuteValue(test, g_type, saturation, hour, minute):
 
     polygon_class = ".polygon-sat" if saturation else ".polygon-use"
     sel = f"#metrics-hour-{hour} div.metrics-minute[data-minute='{minute}'] div.metrics-data-{g_type} .compressed{polygon_class}"
-    m = re.search(r"--%s:\s*([0-9.]+);" % (saturation and "saturation" or "utilization"), test.browser.attr(sel, "style"))
+    m = re.search(r"--%s:\s*([0-9.]+);" % ("saturation" if saturation else "utilization"), test.browser.attr(sel, "style"))
     test.assertIsNotNone(m)
     return float(m.group(1))
 
@@ -414,10 +414,8 @@ class TestHistoryMetrics(testlib.MachineCase):
         b.wait_in_text("#metrics-hour-1615197600000 div.metrics-minute[data-minute='39'] .metrics-events span.spikes_info", "Load")
 
         # Now add the journal
-        # Journal was recorded on Fedora 33 and when trying to use it with older systemd it fails with:
-        # `Journal file /var/log/journal/*/journal.journal uses an unsupported feature, ignoring file.`
-
-        if self.machine.image == "centos-8-stream" or self.machine.image.startswith("rhel-8-"):
+        # Older systemds get a slightly wrong log window with --since/until, so only run on newer ones
+        if re.search(r"centos-9|rhel-9|debian-stable|ubuntu-2204|ubuntu-stable", self.machine.image):
             return
 
         m.upload(["verify/files/metrics-archives/journal.journal.gz"], "/tmp")
@@ -426,23 +424,25 @@ class TestHistoryMetrics(testlib.MachineCase):
         b.reload()
         b.enter_page("/metrics")
 
+        # details for load event at 10:39
         b.wait_in_text(".metrics-heading", "CPU")
         b.click("#metrics-hour-1615197600000 button.metrics-events-expander")
         b.click("#metrics-hour-1615197600000 div.metrics-minute[data-minute='39'] .metrics-events button.spikes_info")
-        b.wait_visible(".cockpit-log-message:contains('Created slice cockpittest.slice.')")
-        b.wait_in_text(".cockpit-logline:first-child .cockpit-log-message", "cpu-piglet")
-        b.click(".cockpit-logline:first-child .cockpit-log-message")
+        b.wait_in_text(".cockpit-log-panel", "load-hog.service: Succeeded.")
+        b.wait_in_text(".cockpit-log-panel", "Stopping /usr/bin/sh -ec for i in `seq 500`")
+        b.click(".cockpit-logline:contains('Stopping /usr/bin/sh -ec for i in `seq 500`') .cockpit-log-message")
         b.enter_page("/system/logs")
-        b.wait_in_text(".pf-v5-c-card__title", "cpu-piglet")
+        b.wait_in_text(".pf-v5-c-card__header", "load-hog.service")
+        b.wait_in_text(".pf-v5-c-card__title", "Stopping /usr/bin/sh -ec")
         b.click("li:contains('Logs')")
-        b.wait_visible(".cockpit-log-message:contains('Created slice cockpittest.slice.')")
+        b.wait_visible(".cockpit-log-message:contains('Stopping /usr/bin/sh -ec')")
 
         b.go("/metrics")
         b.enter_page("/metrics")
         # logs exist, should show tight range
         b.click("button:contains('View detailed logs')")
         b.enter_page("/system/logs")
-        b.wait_visible(".cockpit-log-message:contains('Created slice cockpittest.slice.')")
+        b.wait_visible(".cockpit-log-message:contains('load-hog.service: Succeeded.')")
         url = b.eval_js('window.location.hash')
         self.assertIn("priority=info", url)
         self.assertIn("since=2021-3-8%2010%3A39%3A0", url)
@@ -696,7 +696,7 @@ class TestHistoryMetrics(testlib.MachineCase):
             for _ in range(10):
                 b.click("#metrics-header-section button.pf-m-secondary")
                 b.wait_visible('#switch-pmproxy')
-                found = b.is_present("#switch-pmproxy" + (expected and ":checked" or ":not(:checked)"))
+                found = b.is_present("#switch-pmproxy" + (":checked" if expected else ":not(:checked)"))
                 b.click(f"{self.pcp_dialog_selector} button.btn-cancel")
                 b.wait_not_present(self.pcp_dialog_selector)
 
@@ -1429,7 +1429,7 @@ class TestGrafanaClient(testlib.MachineCase):
         # avoid dynamic host name changes during PCP data collection, and start from clean slate
         m.execute("""systemctl stop pmlogger || true
                      systemctl reset-failed pmlogger || true
-                     rm -rf /var/log/pcp/pmlogger
+                     rm -rf /var/log/pcp/pmlogger/*
                      hostnamectl set-hostname grafana-client""")
 
         # start Grafana

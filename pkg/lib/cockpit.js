@@ -1483,10 +1483,24 @@ function factory() {
             });
     };
 
-    function format_units(number, suffixes, factor, options) {
-        // backwards compat: "options" argument position used to be a boolean flag "separate"
-        if (!is_object(options))
-            options = { separate: options };
+    let deprecated_format_warned = false;
+    function format_units(suffixes, number, second_arg, third_arg) {
+        let options = second_arg;
+        let factor = options?.base2 ? 1024 : 1000;
+
+        // compat API: we used to accept 'factor' as a separate second arg
+        if (third_arg || (second_arg && !is_object(second_arg))) {
+            if (!deprecated_format_warned) {
+                console.warn(`cockpit.format_{bytes,bits}[_per_sec](..., ${second_arg}, ${third_arg}) is deprecated.`);
+                deprecated_format_warned = true;
+            }
+
+            factor = second_arg || 1000;
+            options = third_arg;
+            // double backwards compat: "options" argument position used to be a boolean flag "separate"
+            if (!is_object(options))
+                options = { separate: options };
+        }
 
         let suffix = null;
 
@@ -1525,7 +1539,7 @@ function factory() {
             }
         }
 
-        const string_representation = cockpit.format_number(number, options.precision);
+        const string_representation = cockpit.format_number(number, options?.precision);
         let ret;
 
         if (string_representation && suffix)
@@ -1533,7 +1547,7 @@ function factory() {
         else
             ret = [string_representation];
 
-        if (!options.separate)
+        if (!options?.separate)
             ret = ret.join(" ");
 
         return ret;
@@ -1544,36 +1558,8 @@ function factory() {
         1024: [null, "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB"]
     };
 
-    cockpit.format_bytes = function format_bytes(number, factor, options) {
-        if (factor === undefined)
-            factor = 1000;
-        return format_units(number, byte_suffixes, factor, options);
-    };
-
-    cockpit.get_byte_units = function get_byte_units(guide_value, factor) {
-        if (factor === undefined || !(factor in byte_suffixes))
-            factor = 1000;
-
-        function unit(index) {
-            return {
- name: byte_suffixes[factor][index],
-                     factor: Math.pow(factor, index)
-                   };
-        }
-
-        const units = [unit(2), unit(3), unit(4)];
-
-        // The default unit is the largest one that gives us at least
-        // two decimal digits in front of the comma.
-
-        for (let i = units.length - 1; i >= 0; i--) {
-            if (i === 0 || (guide_value / units[i].factor) >= 10) {
-                units[i].selected = true;
-                break;
-            }
-        }
-
-        return units;
+    cockpit.format_bytes = function format_bytes(number, ...args) {
+        return format_units(byte_suffixes, number, ...args);
     };
 
     const byte_sec_suffixes = {
@@ -1581,20 +1567,16 @@ function factory() {
         1024: ["B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s", "PiB/s", "EiB/s", "ZiB/s"]
     };
 
-    cockpit.format_bytes_per_sec = function format_bytes_per_sec(number, factor, options) {
-        if (factor === undefined)
-            factor = 1000;
-        return format_units(number, byte_sec_suffixes, factor, options);
+    cockpit.format_bytes_per_sec = function format_bytes_per_sec(number, ...args) {
+        return format_units(byte_sec_suffixes, number, ...args);
     };
 
     const bit_suffixes = {
         1000: ["bps", "Kbps", "Mbps", "Gbps", "Tbps", "Pbps", "Ebps", "Zbps"]
     };
 
-    cockpit.format_bits_per_sec = function format_bits_per_sec(number, factor, options) {
-        if (factor === undefined)
-            factor = 1000;
-        return format_units(number, bit_suffixes, factor, options);
+    cockpit.format_bits_per_sec = function format_bits_per_sec(number, ...args) {
+        return format_units(bit_suffixes, number, ...args);
     };
 
     /* ---------------------------------------------------------------------

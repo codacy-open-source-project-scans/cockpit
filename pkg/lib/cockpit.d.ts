@@ -28,6 +28,27 @@ declare module 'cockpit' {
 
     function assert(predicate: unknown, message?: string): asserts predicate;
 
+    export let language: string;
+
+    /* === jQuery compatible promise ============== */
+
+    interface DeferredPromise<T> extends Promise<T> {
+        /* jQuery Promise compatibility */
+        done(callback: (data: T) => void): DeferredPromise<T>
+        fail(callback: (exc: Error) => void): DeferredPromise<T>
+        always(callback: () => void): DeferredPromise<T>
+        progress(callback: (message: T, cancel: () => void) => void): DeferredPromise<T>
+    }
+
+    interface Deferred<T> {
+        resolve(): Deferred<T>;
+        reject(): Deferred<T>;
+        notify(): Deferred<T>;
+        promise: DeferredPromise<T>
+    }
+
+    function defer<T>(): Deferred<T>;
+
     /* === Events mix-in ========================= */
 
     interface EventMap {
@@ -77,6 +98,7 @@ declare module 'cockpit' {
         id: string | null;
         binary: boolean;
         options: JsonObject;
+        ready: boolean;
         valid: boolean;
         send(data: T): void;
         control(options: ControlMessage): void;
@@ -86,12 +108,38 @@ declare module 'cockpit' {
 
     interface ChannelOptions {
         payload: string;
-        superuser?: string;
+        superuser?: "try" | "require";
         [_: string]: JsonValue | undefined;
     }
 
     function channel(options: ChannelOptions & { binary?: false; }): Channel<string>;
     function channel(options: ChannelOptions & { binary: true; }): Channel<Uint8Array>;
+
+    /* === cockpit.spawn ============================= */
+
+    interface Spawn<T> extends DeferredPromise<T> {
+        input(message: T, stream?: boolean): DeferredPromise<T>;
+        stream(callback: (data: T) => void): DeferredPromise<T>;
+        close(): void;
+    }
+
+    interface SpawnOptions {
+        binary?: boolean,
+        directory?: string;
+        err?: "out" | "ignore" | "message";
+        environ?: string[];
+        pty?: boolean;
+        superuser?: "try" | "require";
+    }
+
+    function spawn(
+        args: string[],
+        options?: SpawnOptions & { binary?: false }
+    ): Spawn<string>;
+    function spawn(
+        args: string[],
+        options: SpawnOptions & { binary: true }
+    ): Spawn<Uint8Array>;
 
     /* === cockpit.location ========================== */
 
@@ -131,7 +179,16 @@ declare module 'cockpit' {
         close(): void;
     }
 
+    type VariantType = string | Uint8Array | number | boolean | VariantType[];
+    interface Variant {
+        t: string;
+        v: VariantType;
+    }
+
     function dbus(name: string | null, options?: DBusOptions): DBusClient;
+
+    function variant(type: string, value: VariantType): Variant;
+    function byte_array(string: string): string;
 
     /* === cockpit.file ========================== */
 
@@ -192,11 +249,29 @@ declare module 'cockpit' {
 
     /* === String helpers ======================== */
 
+    function message(problem: string | JsonObject): string;
+
     function gettext(message: string): string;
     function gettext(context: string, message?: string): string;
     function ngettext(message1: string, messageN: string, n: number): string;
     function ngettext(context: string, message1: string, messageN: string, n: number): string;
 
-    function format_bytes(n: number): string;
     function format(format_string: string, ...args: unknown[]): string;
+
+    /* === Number formatting ===================== */
+
+    type FormatOptions = {
+        precision?: number;
+        base2?: boolean;
+    };
+    type MaybeNumber = number | null | undefined;
+
+    function format_number(n: MaybeNumber, precision?: number): string
+    function format_bytes(n: MaybeNumber, options?: FormatOptions): string;
+    function format_bytes_per_sec(n: MaybeNumber, options?: FormatOptions): string;
+    function format_bits_per_sec(n: MaybeNumber, options?: FormatOptions & { base2?: false }): string;
+
+    /** @deprecated */ function format_bytes(n: MaybeNumber, factor: unknown, options?: object | boolean): string | string[];
+    /** @deprecated */ function format_bytes_per_sec(n: MaybeNumber, factor: unknown, options?: object | boolean): string | string[];
+    /** @deprecated */ function format_bits_per_sec(n: MaybeNumber, factor: unknown, options?: object | boolean): string | string[];
 }

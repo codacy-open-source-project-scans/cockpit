@@ -1104,7 +1104,7 @@ export function reload_systemd() {
 
 export function is_mounted_synch(block) {
     return (cockpit.spawn(["findmnt", "-n", "-o", "TARGET", "-S", decode_filename(block.Device)],
-                          { superuser: true, err: "message" })
+                          { superuser: "require", err: "message" })
             .then(data => data.trim())
             .catch(() => false));
 }
@@ -1139,4 +1139,17 @@ export function get_mount_points(client, block_fsys, subvol) {
     }
 
     return mounted_at;
+}
+
+export function get_byte_units(guide_value) {
+    const units = [
+        { factor: 1000 ** 2, name: "MB" },
+        { factor: 1000 ** 3, name: "GB" },
+        { factor: 1000 ** 4, name: "TB" },
+    ];
+    // Find the biggest unit which gives two digits left of the decimal point (>= 10)
+    const unit = units.findLastIndex(unit => guide_value / unit.factor >= 10);
+    // Mark it selected.  If we couldn't find one (-1), then use MB.
+    units[Math.max(0, unit)].selected = true;
+    return units;
 }

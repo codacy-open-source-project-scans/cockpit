@@ -1,5 +1,5 @@
 import cockpit from "cockpit";
-import QUnit from "qunit-tests";
+import QUnit, { f } from "qunit-tests";
 
 QUnit.test("format", function (assert) {
     assert.equal(cockpit.format("My $adj message with ${amount} of things", { adj: "special", amount: "lots" }),
@@ -42,7 +42,7 @@ QUnit.test("format_number", function (assert) {
         [-123.01, "-123", "-123"],
         [null, "", ""],
         [undefined, "", ""],
-    ];
+    ] as const;
 
     const saved_language = cockpit.language;
 
@@ -51,19 +51,22 @@ QUnit.test("format_number", function (assert) {
     cockpit.language = 'en';
     for (let i = 0; i < checks.length; i++) {
         assert.strictEqual(cockpit.format_number(checks[i][0]), checks[i][1],
-                           "format_number@en(" + checks[i][0] + ") = " + checks[i][1]);
+                           f`format_number@en(${checks[i][0]})`
+        );
     }
 
     cockpit.language = 'de';
     for (let i = 0; i < checks.length; i++) {
         assert.strictEqual(cockpit.format_number(checks[i][0]), checks[i][2],
-                           "format_number@de(" + checks[i][0] + ") = " + checks[i][2]);
+                           f`format_number@de(${checks[i][0]})`
+        );
     }
 
     cockpit.language = 'pt_BR';
     for (let i = 0; i < checks.length; i++) {
         assert.strictEqual(cockpit.format_number(checks[i][0]), checks[i][2],
-                           "format_number@pt_BR(" + checks[i][0] + ") = " + checks[i][2]);
+                           f`format_number@pt_BR(${checks[i][0]})`
+        );
     }
 
     /* restore this as not to break the other tests */
@@ -101,54 +104,35 @@ QUnit.test("format_bytes", function (assert) {
         [0, "KB", "0 KB"],
         [undefined, "KB", ""],
         [null, "KB", ""],
-    ];
+    ] as const;
 
-    assert.expect(checks.length * 2 + 2);
+    for (let i = 0; i < checks.length; i++) {
+        if (typeof checks[i][1] === 'string') {
+            // these tests are for backwards compatibility only
+            continue;
+        }
+
+        const base2 = checks[i][1] == 1024;
+        assert.strictEqual(cockpit.format_bytes(checks[i][0], { base2 }), checks[i][2],
+                           f`format_bytes(${checks[i][0]}, ${{ base2 }})`);
+    }
+
+    // old API style (deprecated)
     for (let i = 0; i < checks.length; i++) {
         assert.strictEqual(cockpit.format_bytes(checks[i][0], checks[i][1]), checks[i][2],
-                           "format_bytes(" + checks[i][0] + ", " + String(checks[i][1]) + ") = " + checks[i][2]);
+                           f`format_bytes(${checks[i][0]}, ${checks[i][1]})`
+        );
     }
     for (let i = 0; i < checks.length; i++) {
         const split = checks[i][2].split(" ");
         assert.deepEqual(cockpit.format_bytes(checks[i][0], checks[i][1], { separate: true }), split,
-                         "format_bytes(" + checks[i][0] + ", " + String(checks[i][1]) + ", true) = " + split);
+                         f`format_bytes(${checks[i][0]}, ${checks[i][1]}, ${{ separate: true }})`
+        );
     }
 
     // backwards compatible API: format_bytes with a boolean options (used to be a single "separate" flag)
     assert.strictEqual(cockpit.format_bytes(2500000, 1000, false), "2.50 MB");
     assert.deepEqual(cockpit.format_bytes(2500000, 1000, true), ["2.50", "MB"]);
-});
-
-QUnit.test("get_byte_units", function (assert) {
-    const mib = 1024 * 1024;
-    const gib = mib * 1024;
-    const tib = gib * 1024;
-
-    const mib_unit = { factor: mib, name: "MiB" };
-    const gib_unit = { factor: gib, name: "GiB" };
-    const tib_unit = { factor: tib, name: "TiB" };
-
-    function selected(unit) {
-        return { factor: unit.factor, name: unit.name, selected: true };
-    }
-
-    const checks = [
-        [0 * mib, 1024, [selected(mib_unit), gib_unit, tib_unit]],
-        [20 * mib, 1024, [selected(mib_unit), gib_unit, tib_unit]],
-        [200 * mib, 1024, [selected(mib_unit), gib_unit, tib_unit]],
-        [2000 * mib, 1024, [selected(mib_unit), gib_unit, tib_unit]],
-        [20000 * mib, 1024, [mib_unit, selected(gib_unit), tib_unit]],
-        [20 * gib, 1024, [mib_unit, selected(gib_unit), tib_unit]],
-        [200 * gib, 1024, [mib_unit, selected(gib_unit), tib_unit]],
-        [2000 * gib, 1024, [mib_unit, selected(gib_unit), tib_unit]],
-        [20000 * gib, 1024, [mib_unit, gib_unit, selected(tib_unit)]]
-    ];
-
-    assert.expect(checks.length);
-    for (let i = 0; i < checks.length; i++) {
-        assert.deepEqual(cockpit.get_byte_units(checks[i][0], checks[i][1]), checks[i][2],
-                         "get_byte_units(" + checks[i][0] + ", " + checks[i][1] + ") = " + JSON.stringify(checks[i][2]));
-    }
 });
 
 QUnit.test("format_bytes_per_sec", function (assert) {
@@ -171,18 +155,28 @@ QUnit.test("format_bytes_per_sec", function (assert) {
         // significant integer digits exceed custom precision
         [25555000, "kB/s", { precision: 2 }, "25555 kB/s"],
         [25555678, "kB/s", { precision: 2 }, "25556 kB/s"],
-    ];
+    ] as const;
 
-    assert.expect(checks.length + 2);
     for (let i = 0; i < checks.length; i++) {
-        assert.strictEqual(cockpit.format_bytes_per_sec(checks[i][0], checks[i][1], checks[i][2]), checks[i][3],
-                           `format_bytes_per_sec(${checks[i][0]}, ${checks[i][1]}, ${checks[i][2]}) = ${checks[i][3]}`);
+        if (typeof checks[i][1] === 'string') {
+            // these tests are for backwards compatibility only
+            continue;
+        }
+
+        const base2 = checks[i][1] == 1024;
+        assert.strictEqual(cockpit.format_bytes_per_sec(checks[i][0], { base2, ...checks[i][2] }), checks[i][3],
+                           f`format_bytes_per_sec(${checks[i][0]}, ${{ base2, ...checks[i][2] }})`);
     }
 
-    // separate unit
+    // old API style (deprecated)
+    for (let i = 0; i < checks.length; i++) {
+        assert.strictEqual(cockpit.format_bytes_per_sec(checks[i][0], checks[i][1], checks[i][2]), checks[i][3],
+                           f`format_bytes_per_sec(${checks[i][0]}, ${checks[i][1]}, ${checks[i][2]})`);
+    }
+    // separate unit (very deprecated)
     assert.deepEqual(cockpit.format_bytes_per_sec(2555, 1024, { separate: true }),
                      ["2.50", "KiB/s"]);
-    // backwards compatible API for separate flag
+    // backwards compatible API for separate flag (oh so very deprecated)
     assert.deepEqual(cockpit.format_bytes_per_sec(2555, 1024, true),
                      ["2.50", "KiB/s"]);
 });
@@ -195,12 +189,12 @@ QUnit.test("format_bits_per_sec", function (assert) {
         [2555, "2.56 Kbps"],
         [2000, "2 Kbps"],
         [2003, "2.00 Kbps"]
-    ];
+    ] as const;
 
     assert.expect(checks.length);
     for (let i = 0; i < checks.length; i++) {
         assert.strictEqual(cockpit.format_bits_per_sec(checks[i][0]), checks[i][1],
-                           "format_bits_per_sec(" + checks[i][0] + ") = " + checks[i][1]);
+                           f`format_bits_per_sec(${checks[i][0]})`);
     }
 });
 

@@ -123,10 +123,10 @@ class TestConnection(testlib.MachineCase):
         b.set_val("#login-password-input", "foobar")
 
         # sever the connection on the login page
-        m.execute("iptables -w -I INPUT -p tcp --dport 9090 -j REJECT --reject-with tcp-reset")
+        stop_cockpit()
         b.click('#login-button')
         b.wait_text_not('#login-fatal-message', "")
-        m.execute("iptables -w -D INPUT -p tcp --dport 9090 -j REJECT --reject-with tcp-reset")
+        start_cockpit()
         b.reload()
         b.wait_visible("#login")
         b.set_val("#login-user-input", "admin")
@@ -135,14 +135,21 @@ class TestConnection(testlib.MachineCase):
         b.enter_page("/system")
 
         # sever the connection on the server page
-        m.execute("iptables -w -I INPUT -p tcp --dport 9090 -j REJECT")
-        b.switch_to_top()
-        with b.wait_timeout(60):
-            b.wait_visible(".curtains-ct")
+        # would be nice to use `firewall-cmd --add-rich-rule`, but firewalld always allows "established" connections
+        m.execute("nft add table ip cockpittest")
+        m.execute("nft add chain ip cockpittest INPUT '{ type filter hook input priority 0; policy accept; }'")
+        m.execute("nft insert rule ip cockpittest INPUT tcp dport 9090 reject")
 
-        b.wait_in_text(".curtains-ct h1", "Disconnected")
-        b.wait_in_text('.curtains-ct .pf-v5-c-empty-state__body', "Connection has timed out.")
-        m.execute("iptables -w -D INPUT -p tcp --dport 9090 -j REJECT")
+        try:
+            b.switch_to_top()
+            with b.wait_timeout(60):
+                b.wait_visible(".curtains-ct")
+
+            b.wait_in_text(".curtains-ct h1", "Disconnected")
+            b.wait_in_text('.curtains-ct .pf-v5-c-empty-state__body', "Connection has timed out.")
+        finally:
+            m.execute("nft delete table ip cockpittest")
+
         b.click("#machine-reconnect")
         b.enter_page("/system")
         b.logout()
@@ -593,27 +600,27 @@ class TestConnection(testlib.MachineCase):
         self.sed_file('$ a\\\nPermitEmptyPasswords yes', '/etc/ssh/sshd_config',
                       self.restart_sshd)
 
-        def assertInOrNot(string, result, expected):
+        def assertInOrNot(string: str, result: str, *, expected: bool) -> None:
             if expected:
                 self.assertIn(string, result)
             else:
                 self.assertNotIn(string, result)
 
-        def checkMotdForUser(string, user, expected):
+        def checkMotdForUser(string: str, user: str, *, expected: bool) -> None:
             result = m.execute(f"ssh -o StrictHostKeyChecking=no -n {user}@localhost")
-            assertInOrNot(string, result, expected)
+            assertInOrNot(string, result, expected=expected)
 
-        def checkMotdContent(string, expected=True):
+        def checkMotdContent(string: str, *, expected: bool = True) -> None:
             # Needs https://github.com/linux-pam/linux-pam/pull/292 (or PAM 1.5.0)
             old_pam = m.image.startswith('rhel-8-') or m.image in ['centos-8-stream', 'ubuntu-2204']
 
             # check issue (should be exactly the same as motd)
-            assertInOrNot(string, m.execute("cat /etc/issue.d/cockpit.issue"), expected)
+            assertInOrNot(string, m.execute("cat /etc/issue.d/cockpit.issue"), expected=expected)
 
             # check motd as 'root' (via cat) and 'admin' and 'user' (via ssh)
-            assertInOrNot(string, m.execute("cat /etc/motd.d/cockpit"), expected)
+            assertInOrNot(string, m.execute("cat /etc/motd.d/cockpit"), expected=expected)
             checkMotdForUser(string, expected=expected, user='admin')
-            checkMotdForUser(string, expected=old_pam and expected or False, user='user')
+            checkMotdForUser(string, expected=old_pam and expected, user='user')
 
         m.stop_cockpit()
         checkMotdContent('systemctl')
@@ -1199,6 +1206,7 @@ UnixPath=/run/cockpit/session
         b.wait_visible("#nav-system li:contains(Hackices)")
         self.assertFalse(b.is_present("#nav-system li:contains(Services)"))
 
+    @testlib.nondestructive
     def testBridgeCLI(self):
         m = self.machine
 
@@ -1288,7 +1296,7 @@ ProtocolHeader = X-Forwarded-Proto
         b.logout()
         b.cdp.invoke("Browser.close")
 
-    @testlib.skipImage("nginx not installed", "centos-8-stream", "rhel-*", "debian-*", "ubuntu-*", "arch")
+    @testlib.skipImage("nginx not installed", "centos-*", "rhel-*", "debian-*", "ubuntu-*", "arch")
     @testlib.skipOstree("nginx not installed")
     @testlib.skipBrowser("Firefox needs proper cert and CA", "firefox")
     def testNginxTLS(self):
@@ -1367,7 +1375,7 @@ server {
         b.click('#login-button')
         b.wait_visible('.pf-v5-c-card.system-health')
 
-    @testlib.skipImage("nginx not installed", "centos-8-stream", "rhel-*", "debian-*", "ubuntu-*", "arch")
+    @testlib.skipImage("nginx not installed", "centos-*", "rhel-*", "debian-*", "ubuntu-*", "arch")
     @testlib.skipOstree("nginx not installed")
     @testlib.skipBrowser("Firefox needs proper cert and CA", "firefox")
     def testNginxNoTLS(self):
