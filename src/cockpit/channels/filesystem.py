@@ -29,7 +29,7 @@ import re
 import stat
 import tempfile
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Iterator
 
 from cockpit._vendor.systemd_ctypes import Handle, PathWatch
 from cockpit._vendor.systemd_ctypes.inotify import Event as InotifyEvent
@@ -121,7 +121,7 @@ class FsListChannel(Channel):
 class FsReadChannel(GeneratorChannel):
     payload = 'fsread1'
 
-    def do_yield_data(self, options: JsonObject) -> GeneratorChannel.DataGenerator:
+    def do_yield_data(self, options: JsonObject) -> Iterator[bytes]:
         path = get_str(options, 'path')
         binary = get_enum(options, 'binary', ['raw'], None) is not None
         max_read_size = get_int(options, 'max_read_size', None)
@@ -161,55 +161,89 @@ class FsReadChannel(GeneratorChannel):
 class FsReplaceChannel(AsyncChannel):
     payload = 'fsreplace1'
 
+    def delete(self, path: str, tag: 'str | None') -> str:
+        if tag is not None and tag != tag_from_path(path):
+            raise ChannelError('change-conflict')
+        with contextlib.suppress(FileNotFoundError):  # delete is idempotent
+            os.unlink(path)
+        return '-'
+
+    async def set_contents(self, path: str, tag: 'str | None', data: 'bytes | None', size: 'int | None') -> str:
+        dirname, basename = os.path.split(path)
+        tmpname: str | None
+        fd, tmpname = tempfile.mkstemp(dir=dirname, prefix=f'.{basename}-')
+        try:
+            if size is not None:
+                logger.debug('fallocate(%s.tmp, %d)', path, size)
+                if size:  # posix_fallocate() of 0 bytes is EINVAL
+                    await self.in_thread(os.posix_fallocate, fd, 0, size)
+                self.ready()  # ...only after that worked
+
+            written = 0
+            while data is not None:
+                await self.in_thread(os.write, fd, data)
+                written += len(data)
+                data = await self.read()
+
+            if size is not None and written < size:
+                logger.debug('ftruncate(%s.tmp, %d)', path, written)
+                await self.in_thread(os.ftruncate, fd, written)
+
+            await self.in_thread(os.fdatasync, fd)
+
+            if tag is None:
+                # no preconditions about what currently exists or not
+                # calculate the file mode from the umask
+                os.fchmod(fd, 0o666 & ~my_umask())
+                os.rename(tmpname, path)
+                tmpname = None
+
+            elif tag == '-':
+                # the file must not exist.  file mode from umask.
+                os.fchmod(fd, 0o666 & ~my_umask())
+                os.link(tmpname, path)  # will fail if file exists
+
+            else:
+                # the file must exist with the given tag
+                buf = os.stat(path)
+                if tag != tag_from_stat(buf):
+                    raise ChannelError('change-conflict')
+                # chown/chmod from the existing file permissions
+                os.fchmod(fd, stat.S_IMODE(buf.st_mode))
+                os.fchown(fd, buf.st_uid, buf.st_gid)
+                os.rename(tmpname, path)
+                tmpname = None
+
+        finally:
+            os.close(fd)
+            if tmpname is not None:
+                os.unlink(tmpname)
+
+        return tag_from_path(path)
+
     async def run(self, options: JsonObject) -> JsonObject:
         path = get_str(options, 'path')
+        size = get_int(options, 'size', None)
         tag = get_str(options, 'tag', None)
-        dirname, basename = os.path.split(get_str(options, 'path'))
-
-        self.ready()
 
         try:
-            delete_on_exit = None
-            data = await self.read()
-            if data is None:
-                # if we get EOF right away, that's a request to delete
-                if tag is not None and tag != tag_from_path(path):
-                    raise ChannelError('change-conflict')
-                with contextlib.suppress(FileNotFoundError):  # delete is idempotent
-                    os.unlink(path)
+            # In the `size` case, .set_contents() sends the ready only after
+            # it knows that the allocate was successful.  In the case without
+            # `size`, we need to send the ready() up front in order to
+            # receive the first frame and decide if we're creating or deleting.
+            if size is not None:
+                tag = await self.set_contents(path, tag, b'', size)
             else:
-                # otherwise, spool data into a temporary file until EOF then rename into place...
-                with tempfile.NamedTemporaryFile(dir=dirname, prefix=f'.{basename}-', delete=False) as tmp:
-                    delete_on_exit = tmp.name
-                    loop = asyncio.get_running_loop()
-                    while data is not None:
-                        await loop.run_in_executor(None, tmp.write, data)
-                        data = await self.read()
+                self.ready()
+                data = await self.read()
+                # if we get EOF right away, that's a request to delete
+                if data is None:
+                    tag = self.delete(path, tag)
+                else:
+                    tag = await self.set_contents(path, tag, data, None)
 
-                    await loop.run_in_executor(None, os.fdatasync, tmp.fileno())
-
-                    if tag is None:
-                        # no preconditions about what currently exists or not
-                        # calculate the file mode from the umask
-                        os.fchmod(tmp.fileno(), 0o666 & ~my_umask())
-                        os.rename(tmp.name, path)
-                        delete_on_exit = None
-
-                    elif tag == '-':
-                        # the file must not exist.  file mode from umask.
-                        os.fchmod(tmp.fileno(), 0o666 & ~my_umask())
-                        os.link(tmp.name, path)  # will fail if file exists
-
-                    else:
-                        # the file must exist with the given tag
-                        buf = os.stat(path)
-                        if tag != tag_from_stat(buf):
-                            raise ChannelError('change-conflict')
-                        # chown/chmod from the existing file permissions
-                        os.fchmod(tmp.fileno(), stat.S_IMODE(buf.st_mode))
-                        os.fchown(tmp.fileno(), buf.st_uid, buf.st_gid)
-                        os.rename(tmp.name, path)
-                        delete_on_exit = None
+            self.done()
+            return {'tag': tag}
 
         except FileNotFoundError as exc:
             raise ChannelError('not-found') from exc
@@ -223,13 +257,6 @@ class FsReplaceChannel(AsyncChannel):
             raise ChannelError('access-denied', message=str(exc)) from exc
         except OSError as exc:
             raise ChannelError('internal-error', message=str(exc)) from exc
-        finally:
-            if delete_on_exit is not None:
-                os.unlink(delete_on_exit)
-
-        self.done()
-
-        return {'tag': tag_from_path(path)}
 
 
 class FsWatchChannel(Channel):

@@ -84,11 +84,18 @@ QUnit.test("format_number", function (assert) {
 
 QUnit.test("format_bytes", function (assert) {
     const checks = [
-        [999, 1000, "999"],
-        [1934, undefined, "1.93 KB"],
-        [1934, 1000, "1.93 KB"],
+        [0, undefined, "0 B"],
+        [0, 1000, "0 B"],
+        [0, 1024, "0 B"],
+        [5, 1000, "5 B"],
+        [5, 1024, "5 B"],
+        [999, 1000, "999 B"],
+        [999, 1024, "999 B"],
+        [1023, 1024, "1023 B"],
+        [1934, undefined, "1.93 kB"],
+        [1934, 1000, "1.93 kB"],
         [2000, 1024, "1.95 KiB"],
-        [1999, 1000, "2.00 KB"],
+        [1999, 1000, "2.00 kB"],
         [1999, 1024, "1.95 KiB"],
         [1000000, 1000, "1 MB"],
         [1000001, 1000, "1.00 MB"],
@@ -98,12 +105,12 @@ QUnit.test("format_bytes", function (assert) {
         [2000001, 1000, "2.00 MB"],
         [2000000, "MB", "2 MB"],
         [2000000, "MiB", "1.91 MiB"],
-        [2000000, "KB", "2000 KB"],
+        [2000000, "kB", "2000 kB"],
         [2000000, "KiB", "1953 KiB"],
-        [1, "KB", "0.001 KB"],
-        [0, "KB", "0 KB"],
-        [undefined, "KB", ""],
-        [null, "KB", ""],
+        [1, "kB", "0.001 kB"],
+        [0, "kB", "0 kB"],
+        [undefined, "kB", ""],
+        [null, "kB", ""],
     ] as const;
 
     for (let i = 0; i < checks.length; i++) {
@@ -138,12 +145,15 @@ QUnit.test("format_bytes", function (assert) {
 QUnit.test("format_bytes_per_sec", function (assert) {
     const checks = [
         // default unit
+        [0, undefined, undefined, "0 B/s"],
         [5, undefined, undefined, "5 B/s"],
         [2555, undefined, undefined, "2.56 kB/s"],
         [12345678, undefined, undefined, "12.3 MB/s"],
         // explicit base-2 unit
+        [0, 1024, undefined, "0 B/s"],
         [2555, 1024, undefined, "2.50 KiB/s"],
         // explicit base-10 unit
+        [0, 1000, undefined, "0 B/s"],
         [2555, 1000, undefined, "2.56 kB/s"],
         [12345678, 1000, undefined, "12.3 MB/s"],
         // explicit unit

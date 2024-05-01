@@ -42,11 +42,7 @@ import cdp
 from lcov import write_lcov
 from lib.constants import OSTREE_IMAGES
 from machine import testvm
-
-try:
-    from PIL import Image
-except ImportError:
-    Image = None
+from PIL import Image
 
 _T = TypeVar('_T')
 _FT = TypeVar("_FT", bound=Callable[..., Any])
@@ -735,13 +731,6 @@ class Browser:
         """
         self.wait_visible('#' + elem_id)
 
-    def wait_popdown(self, elem_id: str) -> None:
-        """Wait for a popup to close.
-
-        :param id: the 'id' attribute of the popup.
-        """
-        self.wait_not_visible('#' + elem_id)
-
     def wait_language(self, lang: str) -> None:
         parts = lang.split("-")
         code_1 = parts[0]
@@ -1210,12 +1199,13 @@ class Browser:
             def ignorable_change(a: tuple[int, int, int], b: tuple[int, int, int]) -> bool:
                 return abs(a[0] - b[0]) <= 2 and abs(a[1] - b[1]) <= 2 and abs(a[2] - b[2]) <= 2
 
-            def img_eq(ref: Image, now: Image, delta: Image) -> bool:
+            def img_eq(ref: Image.Image, now: Image.Image, delta: Image.Image) -> bool:
                 # This is slow but exactly what we want.
                 # ImageMath might be able to speed this up.
-                data_ref = ref.load()
-                data_now = now.load()
-                data_delta = delta.load()
+                # no-untyped-call: see https://github.com/python-pillow/Pillow/issues/8029
+                data_ref = ref.load()  # type: ignore[no-untyped-call]
+                data_now = now.load()  # type: ignore[no-untyped-call]
+                data_delta = delta.load()  # type: ignore[no-untyped-call]
                 result = True
                 count = 0
                 width, height = delta.size
@@ -1240,7 +1230,7 @@ class Browser:
                     # Preserve alpha channel so that the 'now'
                     # image can be used as the new reference image
                     # without further changes
-                    img_now.putalpha(img_ref.getchannel("A"))
+                    img_now.putalpha(img_ref.getchannel("A"))  # type: ignore[no-untyped-call]
                 img_now.save(filename)
                 attach(filename, move=True)
                 ref_filename_for_attach = base + "-reference.png"
@@ -1472,7 +1462,7 @@ class MachineCase(unittest.TestCase):
         return os.environ.get('NODE_ENV') == 'development'
 
     def is_pybridge(self) -> bool:
-        # some tests start e.g. centos-7 as first machine, bridge may not exist there
+        # some tests start e.g. centos-8 as first machine, bridge may not exist there
         return any('python' in m.execute('head -c 30 /usr/bin/cockpit-bridge || true') for m in self.machines.values())
 
     def disable_preload(self, *packages: str, machine: testvm.Machine | None = None) -> None:
@@ -1935,6 +1925,7 @@ class MachineCase(unittest.TestCase):
                                     "We are no longer a registered authentication agent.",
                                     ".*: failed to retrieve resource: terminated",
                                     ".*: external channel failed: (terminated|protocol-error)",
+                                    ".*: truncated data in external channel",
                                     'audit:.*denied.*comm="systemd-user-se".*nologin.*',
                                     ".*No session for cookie",
 
