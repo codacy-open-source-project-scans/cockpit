@@ -18,8 +18,6 @@ export deb_pamlibdir = $(shell { pkgconf --variable=libdir pam || echo /lib/$(DE
 
 override_dh_auto_configure:
 	dh_auto_configure -- \
-		--with-cockpit-user=cockpit-ws \
-		--with-cockpit-ws-instance-user=cockpit-wsinstance \
 		--with-pamdir=/$(deb_pamlibdir)/security \
 		--libexecdir=/usr/lib/cockpit $(CONFIG_OPTIONS)
 
@@ -69,3 +67,7 @@ else
 	pytest -vv -k 'not linter and not test_descriptions' -opythonpath=$$(ls -d debian/cockpit-bridge/usr/lib/python3*/dist-packages)
 endif
 endif
+
+# dh compat 14 does that automatically, remove when upgrading
+execute_before_dh_installtmpfiles:
+	dh_installsysusers

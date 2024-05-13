@@ -223,6 +223,11 @@ class TestConnection(testlib.MachineCase):
                 out = m.execute(f"systemctl --no-legend -t {_type} list-units cockpit-wsinstance-https@*")
                 count = len(out.strip().splitlines())
                 self.assertEqual(count, https_instances, out)
+            # instance sockets get cleaned up when stopping cockpit.socket or the instances
+            if not ws_socket or not instance_sockets:
+                self.assertEqual(
+                    m.execute("test ! -e /run/cockpit/wsinstance/ || ls /run/cockpit/wsinstance/").strip(),
+                    "")
 
         # at the beginning, no cockpit related units are running
         m.execute("systemctl reset-failed")
@@ -256,6 +261,13 @@ class TestConnection(testlib.MachineCase):
         # and recovers from that
         self.assertIn("HTTP/1.1 200 OK", m.execute("curl --silent --head http://127.0.0.1:9090"))
         expect_actives(ws_socket=True, instance_sockets=True, http_instances=["http"])
+
+        # cleans up instances when killing the DynamicUser helper unit
+        m.start_cockpit(tls=False)
+        self.assertIn("HTTP/1.1 200 OK", m.execute("curl --silent --head http://127.0.0.1:9090"))
+        expect_actives(ws_socket=True, instance_sockets=True, http_instances=["http"])
+        m.execute("systemctl stop cockpit-ws-user.service")
+        expect_actives(ws_socket=True, instance_sockets=False, http_instances=[])
 
         # https mode
 
@@ -423,7 +435,6 @@ class TestConnection(testlib.MachineCase):
         if not m.ostree_image:
             m.execute("""cat /etc/cockpit/ws-certs.d/cert-chain.key >> /etc/cockpit/ws-certs.d/cert-chain.crt
                          chmod 640 /etc/cockpit/ws-certs.d/cert-chain.crt
-                         chown root:cockpit-ws /etc/cockpit/ws-certs.d/cert-chain.crt
                          rm /etc/cockpit/ws-certs.d/cert-chain.key""")
             check_cert_chain()
 
@@ -612,7 +623,7 @@ class TestConnection(testlib.MachineCase):
 
         def checkMotdContent(string: str, *, expected: bool = True) -> None:
             # Needs https://github.com/linux-pam/linux-pam/pull/292 (or PAM 1.5.0)
-            old_pam = m.image.startswith('rhel-8-') or m.image in ['centos-8-stream', 'ubuntu-2204']
+            old_pam = m.image.startswith('rhel-8-') or m.image in ['ubuntu-2204']
 
             # check issue (should be exactly the same as motd)
             assertInOrNot(string, m.execute("cat /etc/issue.d/cockpit.issue"), expected=expected)
@@ -661,7 +672,7 @@ class TestConnection(testlib.MachineCase):
         m = self.machine
 
         # On RHEL-8 SSH allows password root login by default, so Cockpit does too.
-        ROOT_LOGIN_ENABLED = ['rhel-8', 'centos-8']
+        ROOT_LOGIN_ENABLED = ['rhel-8']
         root_login_disallowed = not any(m.image.startswith(img) for img in ROOT_LOGIN_ENABLED)
 
         if m.image.startswith("debian") or m.image.startswith("ubuntu"):
@@ -835,7 +846,7 @@ class TestConnection(testlib.MachineCase):
         self.assertLess(rss, 250000)
 
     @testlib.nondestructive
-    @testlib.skipImage("Broken with C bridge", "centos-8-stream", "rhel-8*")
+    @testlib.skipImage("Broken with C bridge", "rhel-8*")
     def testFlowControlUpload(self):
         m = self.machine
         b = self.browser

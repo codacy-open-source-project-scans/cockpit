@@ -6,17 +6,18 @@ nodist_systemdunit_DATA = \
 	src/systemd/cockpit.service \
 	src/systemd/cockpit.socket \
 	src/systemd/cockpit-session@.service \
-	src/systemd/cockpit-session.socket \
 	src/systemd/cockpit-wsinstance-http.service \
-	src/systemd/cockpit-wsinstance-http.socket \
 	src/systemd/cockpit-wsinstance-https-factory@.service \
-	src/systemd/cockpit-wsinstance-https-factory.socket \
 	src/systemd/cockpit-wsinstance-https@.service \
-	src/systemd/cockpit-wsinstance-https@.socket \
 	$(NULL)
 
 dist_systemdunit_DATA = \
+	src/systemd/cockpit-session.socket \
+	src/systemd/cockpit-ws-user.service \
 	src/systemd/system-cockpithttps.slice \
+	src/systemd/cockpit-wsinstance-http.socket \
+	src/systemd/cockpit-wsinstance-https-factory.socket \
+	src/systemd/cockpit-wsinstance-https@.socket \
 	$(NULL)
 
 motddir = $(datadir)/$(PACKAGE)/motd/
@@ -33,6 +34,9 @@ install-exec-hook::
 tmpfilesconfdir = $(prefix)/lib/tmpfiles.d
 nodist_tmpfilesconf_DATA = src/systemd/tmpfiles.d/cockpit-ws.conf
 
+sysusersconfdir = $(prefix)/lib/sysusers.d
+dist_sysusersconf_DATA = src/systemd/sysusers.d/cockpit-wsinstance.conf
+
 # we can't generate these with config.status because,
 # eg. it does "@libexecdir@" -> "${exec_prefix}/libexec"
 src/systemd/%: src/systemd/%.in
@@ -40,11 +44,7 @@ src/systemd/%: src/systemd/%.in
 	-e 's,[@]PACKAGE[@],$(PACKAGE),g' \
 	-e 's,[@]admin_group[@],$(admin_group),g' \
 	-e 's,[@]datadir[@],$(datadir),g' \
-	-e 's,[@]group[@],$(COCKPIT_GROUP),g' \
 	-e 's,[@]libexecdir[@],$(libexecdir),g' \
-	-e 's,[@]user[@],$(COCKPIT_USER),g' \
-	-e 's,[@]wsinstancegroup[@],$(COCKPIT_WSINSTANCE_GROUP),g' \
-	-e 's,[@]wsinstanceuser[@],$(COCKPIT_WSINSTANCE_USER),g' \
 	$< > $@.tmp && mv -f $@.tmp $@
 
 systemdgenerated = \
