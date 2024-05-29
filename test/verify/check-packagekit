@@ -1000,7 +1000,7 @@ ExecStart=/usr/local/bin/{packageName}
         m = self.machine
 
         # this tends to corrupt the rpm database, so do a backup/restore
-        if self.backend == 'dnf':
+        if 'dnf' in self.backend:
             # https://www.fedoraproject.org/wiki/Changes/RelocateRPMToUsr
             exists = self.machine.execute("if test -e %s; then echo yes; fi" % "/usr/lib/sysimage/rpm").strip() != ""
             if exists:
@@ -1072,7 +1072,6 @@ ExecStart=/usr/local/bin/{packageName}
             b.wait_visible(".system-health")
             self.assertFalse(b.is_present(self.update_text))
 
-    @testlib.skipDistroPackage()
     @testlib.nondestructive
     def testUnprivileged(self):
         b = self.browser
@@ -1368,14 +1367,13 @@ class TestAutoUpdates(NoSubManCase):
     def setUp(self):
         super().setUp()
         # not implemented for apt yet, only dnf
-        self.supported_backend = self.backend in ["dnf"]
-        if self.backend == 'dnf':
-            self.restore_file("/etc/dnf/automatic.conf")
-            # DNF5 has a different automatic systemd unit
-            if self.machine.image == "fedora-41":
-                self.addCleanup(self.machine.execute, "systemctl disable --now dnf-automatic.timer 2>/dev/null")
-            else:
-                self.addCleanup(self.machine.execute, "systemctl disable --now dnf-automatic-install.timer 2>/dev/null; rm -rf /etc/systemd/system/dnf-automatic-*")
+        self.supported_backend = "dnf" in self.backend
+        if self.backend == "dnf5":
+            self.timer_unit = "dnf5-automatic"
+            self.config = "/etc/dnf/dnf5-plugins/automatic.conf"
+        elif self.backend == "dnf4":
+            self.timer_unit = "dnf-automatic-install"
+            self.config = "/etc/dnf/automatic.conf"
 
     def closeSettings(self, browser):
         browser.click("#automatic-updates-dialog button:contains('Save changes')")
@@ -1396,7 +1394,7 @@ class TestAutoUpdates(NoSubManCase):
             return
 
         def assertTimerDnf(hour, dow):
-            out = m.execute("systemctl --no-legend list-timers dnf-automatic-install.timer")
+            out = m.execute(f"systemctl --no-legend list-timers {self.timer_unit}.timer")
             if hour:
                 # don't test the minutes, due to RandomizedDelaySec=60m
                 self.assertRegex(out, f" {hour}:")
@@ -1409,25 +1407,25 @@ class TestAutoUpdates(NoSubManCase):
                 self.assertNotIn(" day", out)
 
             # service should not run right away
-            self.assertEqual(m.execute("systemctl is-active dnf-automatic-install.service || true").strip(), "inactive")
+            self.assertEqual(m.execute(f"systemctl is-active {self.timer_unit}.service || true").strip(), "inactive")
 
             # automatic reboots should be enabled whenever timer is enabled
-            out = m.execute("systemctl cat dnf-automatic-install.service")
+            out = m.execute(f"systemctl cat {self.timer_unit}.service")
             if hour:
                 if m.image.startswith("rhel-8"):
                     # for RHEL 8, dnf-automatic does not support reboot; we have a unit drop-in hack
                     self.assertRegex(out, "ExecStartPost=/.*shutdown")
                     # validate our assumption
-                    self.assertNotIn("reboot", m.execute("cat /etc/dnf/automatic.conf"))
+                    self.assertNotIn("reboot", m.execute(f"cat {self.config}"))
                 else:
                     # newer dnf supports that natively
                     self.assertNotIn("ExecStartPost", out)
-                    self.assertIn("reboot = when-needed", m.execute("cat /etc/dnf/automatic.conf"))
+                    self.assertIn("reboot = when-needed", m.execute(f"cat {self.config}"))
             else:
                 self.assertNotIn("ExecStartPost", out)
 
         def assertTimer(hour, dow=None):
-            if self.backend == "dnf":
+            if "dnf" in self.backend:
                 assertTimerDnf(hour, dow)
             else:
                 raise NotImplementedError(self.backend)
@@ -1440,10 +1438,10 @@ class TestAutoUpdates(NoSubManCase):
             else:
                 raise ValueError(_type)
 
-            self.assertIn(match, m.execute("grep upgrade_type /etc/dnf/automatic.conf"))
+            self.assertIn(match, m.execute(f"grep upgrade_type {self.config}"))
 
         def assertType(_type):
-            if self.backend == "dnf":
+            if "dnf" in self.backend:
                 assertTypeDnf(_type)
             else:
                 raise NotImplementedError(self.backend)
@@ -1522,15 +1520,15 @@ class TestAutoUpdates(NoSubManCase):
         b.wait_in_text("#autoupdates-settings", "Disabled")
         assertTimer(None)
 
-        if self.backend == "dnf":
+        if "dnf" in self.backend:
             b.click("#autoupdates-settings button:contains('Edit')")
             b.wait_visible("#automatic-updates-dialog")
             b.click("#all-updates")
             self.closeSettings(b)
             # OnCalendar= parsing: only time
-            m.execute("mkdir -p /etc/systemd/system/dnf-automatic.timer.d")
+            m.execute(f"mkdir -p /etc/systemd/system/{self.timer_unit}.timer.d")
             m.execute(r'printf "[Timer]\nOnUnitInactiveSec=\nOnCalendar=08:00\n" > '
-                      r'/etc/systemd/system/dnf-automatic-install.timer.d/time.conf; systemctl daemon-reload')
+                      f'/etc/systemd/system/{self.timer_unit}.timer.d/time.conf; systemctl daemon-reload')
             b.reload()
             b.enter_page("/updates")
             b.wait_in_text("#autoupdates-settings", "Updates will be applied every day at 8:00")
@@ -1538,7 +1536,7 @@ class TestAutoUpdates(NoSubManCase):
 
             # OnCalendar= parsing: weekday and time
             m.execute(r'printf "[Timer]\nOnUnitInactiveSec=\nOnCalendar=Tue 20:00\n" > '
-                      r'/etc/systemd/system/dnf-automatic-install.timer.d/time.conf; systemctl daemon-reload')
+                      f'/etc/systemd/system/{self.timer_unit}.timer.d/time.conf; systemctl daemon-reload')
             b.reload()
             b.enter_page("/updates")
             b.wait_in_text("#autoupdates-settings", "Updates will be applied every Tuesday at 20:00")
@@ -1546,7 +1544,7 @@ class TestAutoUpdates(NoSubManCase):
 
             # OnCalendar= parsing: "every day" calendar and time
             m.execute(r'printf "[Timer]\nOnUnitInactiveSec=\nOnCalendar=*-*-* 07:00\n" > '
-                      r'/etc/systemd/system/dnf-automatic-install.timer.d/time.conf; systemctl daemon-reload')
+                      f'/etc/systemd/system/{self.timer_unit}.timer.d/time.conf; systemctl daemon-reload')
             b.reload()
             b.enter_page("/updates")
             b.wait_in_text("#autoupdates-settings", "Updates will be applied every day at 7:00")
@@ -1554,7 +1552,7 @@ class TestAutoUpdates(NoSubManCase):
 
             # OnCalendar= parsing: unsupported
             m.execute(r'printf "[Timer]\nOnUnitInactiveSec=\nOnCalendar=*-02-* 11:00\n" > '
-                      r'/etc/systemd/system/dnf-automatic-install.timer.d/time.conf; systemctl daemon-reload')
+                      f'/etc/systemd/system/{self.timer_unit}.timer.d/time.conf; systemctl daemon-reload')
             b.reload()
             b.enter_page("/updates")
             time.sleep(5)
@@ -1588,11 +1586,11 @@ class TestAutoUpdates(NoSubManCase):
         self.closeSettings(b)
         b.wait_in_text("#autoupdates-settings", "Updates will be applied every day at 06:00")
 
-        if self.backend == 'dnf':
+        if "dnf" in self.backend:
             # dial down the random sleep to avoid the test having to wait 5 mins
-            self.sed_file("/random_sleep/ s/=.*$/= 3/", "/etc/dnf/automatic.conf")
+            self.sed_file("/random_sleep/ s/=.*$/= 3/", self.config)
             # then manually start the upgrade job like the timer would
-            m.execute("systemctl start dnf-automatic-install.service")
+            m.execute(f"systemctl start {self.timer_unit}.service")
             try:
                 # new kernel-rt package got installed
                 m.execute("test -f /stamp-kernel-rt-1.0-2")
@@ -1606,20 +1604,19 @@ class TestAutoUpdates(NoSubManCase):
                 m.execute("shutdown -c; test ! -f /run/nologin")
             # service should show kernel-rt upgrade
             out = m.execute(
-                "if systemctl status --lines=50 dnf-automatic-install.service; then echo 'expected service to be stopped'; exit 1; fi")
+                f"if systemctl status --lines=50 {self.timer_unit}.service; then echo 'expected service to be stopped'; exit 1; fi")
             self.assertIn("kernel-rt", out)
 
             # run it again, now there are no available updates → no reboot
-            m.execute("systemctl start dnf-automatic-install.service")
+            m.execute(f"systemctl start {self.timer_unit}.service")
             m.execute("test -f /stamp-kernel-rt-1.0-2; test ! -f /run/nologin")
             # service should not do much
             out = m.execute(
-                "if systemctl status dnf-automatic-install.service; then echo 'expected service to be stopped'; exit 1; fi")
+                f"if systemctl status {self.timer_unit}.service; then echo 'expected service to be stopped'; exit 1; fi")
             self.assertNotIn("kernel-rt", out)
         else:
             raise NotImplementedError(self.backend)
 
-    @testlib.skipDistroPackage()
     def testPrivilegeChange(self):
         b = self.browser
         m = self.machine
@@ -1656,7 +1653,12 @@ class TestAutoUpdatesInstall(NoSubManCase):
         b = self.browser
         m = self.machine
 
-        m.execute("if type dnf; then dnf remove -y dnf-automatic; elif type apt; then dpkg -P unattended-upgrades; fi")
+        if self.backend == 'dnf5':
+            m.execute("dnf remove -y dnf5-plugin-automatic")
+        elif self.backend == 'dnf4':
+            m.execute("dnf remove -y dnf-automatic")
+        elif self.backend == 'apt':
+            m.execute("dpkg -P unattended-upgrades")
 
         # first test with available upgrades
         self.createPackage("vanilla", "1.0", "1", install=True)
@@ -1674,7 +1676,7 @@ class TestAutoUpdatesInstall(NoSubManCase):
             b.wait_visible(".pf-v5-c-empty-state__title:contains('Update was successful')")
         b.click("#ignore")
 
-        if self.backend == 'dnf':
+        if "dnf" in self.backend:
             b.wait_in_text("#autoupdates-settings", "Not set up")
             b.wait_not_present("#settings .pf-v5-c-alert")
             b.click("#autoupdates-settings button:contains('Enable')")
@@ -1686,8 +1688,6 @@ class TestAutoUpdatesInstall(NoSubManCase):
     def testInstall(self):
         b = self.browser
         m = self.machine
-
-        m.execute('dnf remove -y dnf-automatic')
 
         # provide minimal content in order for the backend to be seen as supported
         timerContent = """
@@ -1704,11 +1704,25 @@ Unit=-.mount
 [Install]
 WantedBy=basic.target
         """
-        self.createPackage('dnf-automatic', '1', '1', content={
-            '/etc/dnf/automatic.conf': '',
-            '/usr/lib/systemd/system/dnf-automatic.timer': timerContent,
-            '/usr/lib/systemd/system/dnf-automatic-install.timer': timerContent
-        })
+
+        if self.backend == 'dnf5':
+            m.execute("dnf remove -y dnf5-plugin-automatic")
+            self.createPackage('dnf5-plugin-automatic', '1', '1', content={
+                '/etc/dnf/dnf5-plugins/automatic.conf': '',
+                '/usr/lib/systemd/system/dnf5-automatic.timer': timerContent,
+            })
+
+        elif self.backend == 'dnf4':
+            m.execute("dnf remove -y dnf-automatic")
+
+            self.createPackage('dnf-automatic', '1', '1', content={
+                '/etc/dnf/automatic.conf': '',
+                '/usr/lib/systemd/system/dnf-automatic.timer': timerContent,
+                '/usr/lib/systemd/system/dnf-automatic-install.timer': timerContent,
+            })
+        elif self.backend == 'apt':
+            m.execute("dpkg -P unattended-upgrades")
+
         self.enableRepo()
 
         self.login_and_go('/updates')

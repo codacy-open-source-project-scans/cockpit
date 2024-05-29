@@ -71,7 +71,6 @@ __all__ = (
     'opts',
     'sit',
     'skipBrowser',
-    'skipDistroPackage',
     'skipImage',
     'skipOstree',
     'test_main',
@@ -940,12 +939,16 @@ class Browser:
 
         self.open_superuser_dialog()
 
+        # In (open)SUSE images, superuser access always requires the root password
+        if user is None:
+            user = "root" if "suse" in self.machine.image else "admin"
+
         if passwordless:
             self.wait_in_text("div[role=dialog]:contains('Administrative access')", "You now have administrative access.")
             self.click("div[role=dialog] button:contains('Close')")
             self.wait_not_present("div[role=dialog]:contains('You now have administrative access.')")
         else:
-            self.wait_in_text("div[role=dialog]:contains('Switch to administrative access')", f"Password for {user or 'admin'}:")
+            self.wait_in_text("div[role=dialog]:contains('Switch to administrative access')", f"Password for {user}:")
             self.set_input_text("div[role=dialog]:contains('Switch to administrative access') input", password or "foobar")
             self.click("div[role=dialog] button:contains('Authenticate')")
             self.wait_not_present("div[role=dialog]:contains('Switch to administrative access')")
@@ -2338,17 +2341,6 @@ def skipOstree(reason: str) -> Callable[[_FT], _FT]:
     """
     if testvm.DEFAULT_IMAGE in OSTREE_IMAGES:
         return unittest.skip(f"{testvm.DEFAULT_IMAGE}: {reason}")
-    return lambda testEntity: testEntity
-
-
-def skipDistroPackage() -> Callable[[_FT], _FT]:
-    """For tests which apply to BaseOS packages
-
-    With that, tests can evolve with latest code, without constantly breaking them when
-    running against older package versions in the -distropkg tests.
-    """
-    if 'distropkg' in testvm.DEFAULT_IMAGE:
-        return unittest.skip(f"{testvm.DEFAULT_IMAGE}: Do not test BaseOS packages")
     return lambda testEntity: testEntity
 
 

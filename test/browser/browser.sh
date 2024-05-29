@@ -46,6 +46,17 @@ if grep -q 'ID=.*rhel' /etc/os-release; then
     dnf install -y kpatch kpatch-dnf
 fi
 
+# HACK: RHEL has these bundled in cockpit-system, but Fedora doesn't; Provides: break in CentOS/RHEL 10
+# due to https://issues.redhat.com/browse/TFT-2564
+if ! grep -q platform:el /etc/os-release; then
+    if [ "$PLAN" = "basic" ]; then
+        dnf install -y cockpit-kdump cockpit-networkmanager cockpit-sosreport
+    fi
+    if [ "$PLAN" = "network" ]; then
+        dnf install -y cockpit-networkmanager
+    fi
+fi
+
 # if we run during cross-project testing against our main-builds COPR, then let that win
 # even if Fedora has a newer revision
 main_builds_repo="$(ls /etc/yum.repos.d/*cockpit*main-builds* 2>/dev/null || true)"
@@ -82,6 +93,11 @@ echo core > /proc/sys/kernel/core_pattern
 systemctl start firewalld
 firewall-cmd --add-service=cockpit --permanent
 firewall-cmd --add-service=cockpit
+
+# HACK: https://bugzilla.redhat.com/show_bug.cgi?id=2273078
+if grep -q platform:el10 /etc/os-release; then
+    export NETAVARK_FW=nftables
+fi
 
 # Run tests in the cockpit tasks container, as unprivileged user
 CONTAINER="$(cat .cockpit-ci/container)"
