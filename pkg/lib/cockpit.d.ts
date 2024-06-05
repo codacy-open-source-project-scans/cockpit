@@ -154,6 +154,10 @@ declare module 'cockpit' {
 
     export const location: Location;
 
+    /* === cockpit page visibility =============== */
+
+    export let hidden: boolean;
+
     /* === cockpit.dbus ========================== */
 
     interface DBusProxyEvents extends EventMap {
@@ -239,6 +243,7 @@ declare module 'cockpit' {
 
     type UserInfo = {
         id: number;
+        gid: number;
         name: string;
         full_name: string;
         groups: Array<string>;
