@@ -516,54 +516,41 @@ class Browser:
         self.wait_visible(selector + ':not([disabled]):not([aria-disabled=true])')
         self.call_js_func('ph_blur', selector)
 
-    # TODO: Unify them so we can have only one
-    def key_press(self, keys: str, modifiers: int = 0, use_ord: bool = False) -> None:
+    def input_text(self, text: str) -> None:
+        for char in text:
+            self.cdp.invoke("Input.dispatchKeyEvent", type="keyDown", text=char, key=char)
+            self.cdp.invoke("Input.dispatchKeyEvent", type="keyUp", text=char, key=char)
+
+    def key(self, name: str, repeat: int = 1, modifiers: int = 0) -> None:
+        """Press and release a named keyboard key.
+
+        Use this function to input special characters or modifiers.
+
+        :param name: key name like "Enter", "Delete", or "ArrowLeft"
+        :param repeat: number of times to repeat this key (default 1)
+        :param modifiers: bit field: Alt=1, Ctrl=2, Meta/Command=4, Shift=8
+        """
+        args: dict[str, int | str] = {}
         if self.cdp.browser.name == "chromium":
-            self._key_press_chromium(keys, modifiers, use_ord)
-        else:
-            self._key_press_firefox(keys, modifiers, use_ord)
+            # HACK: chromium doesn't understand some key codes in some situations
+            win_keys = {
+                "Backspace": 8,
+                "Enter": 13,
+                "Escape": 27,
+                "ArrowDown": 40,
+                "Insert": 45,
+            }
+            if name in win_keys:
+                args["windowsVirtualKeyCode"] = win_keys[name]
+            if name == 'Enter':
+                args["text"] = '\r'
+            # HACK: chromium needs windowsVirtualKeyCode with modifiers
+            elif len(name) == 1 and name.isalnum() and modifiers != 0:
+                args["windowsVirtualKeyCode"] = ord(name.upper())
 
-    def _key_press_chromium(self, keys: str, modifiers: int = 0, use_ord: bool = False) -> None:
-        for key in keys:
-            args = {"type": "keyDown", "modifiers": modifiers}
-
-            # If modifiers are used we need to pass windowsVirtualKeyCode which is
-            # basically the asci decimal representation of the key
-            args["text"] = key
-            if use_ord:
-                args["windowsVirtualKeyCode"] = ord(key)
-            elif (not key.isalnum() and ord(key) < 32) or modifiers != 0:
-                args["windowsVirtualKeyCode"] = ord(key.upper())
-            else:
-                args["key"] = key
-
-            self.cdp.invoke("Input.dispatchKeyEvent", **args)
-            args["type"] = "keyUp"
-            self.cdp.invoke("Input.dispatchKeyEvent", **args)
-
-    def _key_press_firefox(self, keys: str, modifiers: int = 0, use_ord: bool = False) -> None:
-        # https://python-reference.readthedocs.io/en/latest/docs/str/ASCII.html
-        # Both line feed and carriage return are normalized to Enter (https://html.spec.whatwg.org/multipage/form-elements.html)
-        keyMap = {
-            8: "Backspace",   # Backspace key
-            9: "Tab",         # Tab key
-            10: "Enter",      # Enter key (normalized from line feed)
-            13: "Enter",      # Enter key (normalized from carriage return)
-            27: "Escape",     # Escape key
-            37: "ArrowLeft",  # Arrow key left
-            40: "ArrowDown",  # Arrow key down
-            45: "Insert",     # Insert key
-        }
-        for key in keys:
-            args = {"type": "keyDown", "modifiers": modifiers}
-
-            args["key"] = key
-            if ord(key) < 32 or use_ord:
-                args["key"] = keyMap[ord(key)]
-
-            self.cdp.invoke("Input.dispatchKeyEvent", **args)
-            args["type"] = "keyUp"
-            self.cdp.invoke("Input.dispatchKeyEvent", **args)
+        for _ in range(repeat):
+            self.cdp.invoke("Input.dispatchKeyEvent", type="keyDown", key=name, modifiers=modifiers, **args)
+            self.cdp.invoke("Input.dispatchKeyEvent", type="keyUp", key=name, modifiers=modifiers, **args)
 
     def select_from_dropdown(self, selector: str, value: object) -> None:
         self.wait_visible(selector + ':not([disabled]):not([aria-disabled=true])')
@@ -591,11 +578,11 @@ class Browser:
     ) -> None:
         self.focus(selector)
         if not append:
-            self.key_press("a", 2)  # Ctrl + a
+            self.key("a", modifiers=2)  # Ctrl + a
         if val == "":
-            self.key_press("\b")  # Backspace
+            self.key("Backspace")
         else:
-            self.key_press(val)
+            self.input_text(val)
         if blur:
             self.blur(selector)
 
