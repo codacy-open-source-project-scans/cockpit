@@ -47,12 +47,8 @@ export const ContextMenu = ({ parentId, children } : {
         };
 
         const _handleClick = (event: MouseEvent) => {
-            if (event && event.button === 0 && event.target instanceof HTMLElement) {
-                const wasOutside = !event.target.contains(root.current);
-
-                if (wasOutside)
-                    setVisible(false);
-            }
+            if (event.button === 0)
+                setVisible(false);
         };
 
         const parent = document.getElementById(parentId)!;

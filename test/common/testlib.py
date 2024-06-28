@@ -1015,7 +1015,7 @@ class Browser:
             html = self.cdp.invoke("Runtime.evaluate", expression="document.documentElement.outerHTML",
                                    no_trace=True)["result"]["value"]
             with open(filename, 'wb') as f:
-                f.write(html.encode('UTF-8'))
+                f.write(html.encode())
             attach(filename, move=True)
             print("Wrote HTML dump to " + filename)
 
@@ -1303,7 +1303,7 @@ class Browser:
         if logs:
             filename = unique_filename(f"{label or self.label}-{title}", "js.log")
             with open(filename, 'wb') as f:
-                f.write('\n'.join(logs).encode('UTF-8'))
+                f.write('\n'.join(logs).encode())
             attach(filename, move=True)
             print("Wrote JS log to " + filename)
 
@@ -1332,7 +1332,7 @@ class MachineCase(unittest.TestCase):
     runner = None
     machine: testvm.Machine
     machines: Mapping[str, testvm.Machine]
-    machine_class = None
+    machine_class: type | None = None
     browser: Browser
     network = None
     journal_start: str | None = None
@@ -1450,10 +1450,6 @@ class MachineCase(unittest.TestCase):
 
     def is_devel_build(self) -> bool:
         return os.environ.get('NODE_ENV') == 'development'
-
-    def is_pybridge(self) -> bool:
-        # some tests start some other OS as first machine, bridge may not exist there
-        return any('python' in m.execute('head -c 30 /usr/bin/cockpit-bridge || true') for m in self.machines.values())
 
     def disable_preload(self, *packages: str, machine: testvm.Machine | None = None) -> None:
         if machine is None:
@@ -1609,11 +1605,15 @@ class MachineCase(unittest.TestCase):
         self.restore_file("/etc/subuid")
         self.restore_file("/etc/subgid")
         self.restore_file("/var/log/wtmp")
-        home_dirs = m.execute("ls /home").strip().split()
+
+        def get_home_dirs() -> Sequence[str]:
+            return m.execute("if [ -d /home ]; then ls /home; fi").strip().split()
+
+        initial_home_dirs = get_home_dirs()
 
         def cleanup_home_dirs() -> None:
-            for d in m.execute("ls /home").strip().split():
-                if d not in home_dirs:
+            for d in get_home_dirs():
+                if d not in initial_home_dirs:
                     m.execute("rm -r /home/" + d)
         self.addCleanup(cleanup_home_dirs)
 
@@ -1860,9 +1860,6 @@ class MachineCase(unittest.TestCase):
 
         # timedatex.service shuts down after timeout, runs into race condition with property watching
         ".*org.freedesktop.timedate1: couldn't get all properties.*Error:org.freedesktop.DBus.Error.NoReply.*",
-
-        # https://github.com/cockpit-project/cockpit/issues/19235
-        "invalid non-UTF8 @data passed as text to web_socket_connection_send.*",
     ]
 
     default_allowed_messages += os.environ.get("TEST_ALLOW_JOURNAL_MESSAGES", "").split(",")
